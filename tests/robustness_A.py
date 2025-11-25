@@ -1,11 +1,10 @@
-import sqlite3
-import time
-import threading
+import logging
+import os
 import random
 import struct
-import logging
 import sys
-import os
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 # Add root to path
@@ -24,8 +23,11 @@ PRODUCER_THREADS = 50
 VISIBILITY_TIMEOUT = 2
 FAILURE_RATE = 0.2  # 20% crash
 
+
 def run_chaos_test():
-    print(f"🔥 STARTING SCENARIO A (Meat Grinder): {TOTAL_ITEMS} items, {FAILURE_RATE * 100}% crash rate")
+    print(
+        f"🔥 STARTING SCENARIO A (Meat Grinder): {TOTAL_ITEMS} items, {FAILURE_RATE * 100}% crash rate"
+    )
 
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
@@ -34,11 +36,13 @@ def run_chaos_test():
 
     # 2. Producer Phase
     print(f">> Producing {TOTAL_ITEMS} items with {PRODUCER_THREADS} threads...")
-    
+
     def producer(start, count):
-        local_q = LiteQueue(DB_PATH) # New connection per thread usually safer/cleaner but LiteQueue handles it
+        local_q = LiteQueue(
+            DB_PATH
+        )  # New connection per thread usually safer/cleaner but LiteQueue handles it
         for i in range(start, start + count):
-            payload = struct.pack('>I', i)
+            payload = struct.pack(">I", i)
             local_q.put(payload)
 
     items_per_producer = TOTAL_ITEMS // PRODUCER_THREADS
@@ -47,9 +51,11 @@ def run_chaos_test():
         for i in range(PRODUCER_THREADS):
             start = i * items_per_producer
             # Handle remainder for last producer
-            count = items_per_producer if i < PRODUCER_THREADS - 1 else TOTAL_ITEMS - start
+            count = (
+                items_per_producer if i < PRODUCER_THREADS - 1 else TOTAL_ITEMS - start
+            )
             futures.append(executor.submit(producer, start, count))
-        
+
         for f in futures:
             f.result()
 
@@ -65,7 +71,7 @@ def run_chaos_test():
         # LiteQueue _get_conn creates a new connection each time, so sharing 'q' instance is safe?
         # methods put/pop/peek create new conn.
         # YES.
-        
+
         while not stop_event.is_set():
             msg = q.pop(timeout=VISIBILITY_TIMEOUT)
 
@@ -78,7 +84,7 @@ def run_chaos_test():
                 time.sleep(0.1)
                 continue
 
-            val = struct.unpack('>I', msg.data)[0]
+            val = struct.unpack(">I", msg.data)[0]
 
             # CHAOS
             if random.random() < FAILURE_RATE:
@@ -89,7 +95,7 @@ def run_chaos_test():
             # SUCCESS
             with lock:
                 processed_values.add(val)
-            
+
             # Access protected _ack for test
             q._ack(msg.id)
 
@@ -103,13 +109,16 @@ def run_chaos_test():
             while True:
                 with lock:
                     count = len(processed_values)
-                
+
                 elapsed = time.time() - start_time
-                print(f"Progress: {count}/{TOTAL_ITEMS} ({count/TOTAL_ITEMS:.1%}) | Elapsed: {elapsed:.1f}s", end='\r')
+                print(
+                    f"Progress: {count}/{TOTAL_ITEMS} ({count / TOTAL_ITEMS:.1%}) | Elapsed: {elapsed:.1f}s",
+                    end="\r",
+                )
 
                 if count >= TOTAL_ITEMS:
                     break
-                
+
                 # Safety timeout (e.g. 120 seconds)
                 if elapsed > 120:
                     print("\n❌ TIMEOUT: Test took too long.")
@@ -119,18 +128,18 @@ def run_chaos_test():
 
         except KeyboardInterrupt:
             print("\nTest Aborted.")
-        
+
         finally:
             stop_event.set()
             # We don't cancel futures in ThreadPoolExecutor easily, just wait for them to exit
             # But they loop on stop_event.
             # We might need to wait for them to finish current iteration.
-    
+
     print("\n>> Workers stopped.")
 
     # 4. Verification
     print(f">> Verification Phase")
-    
+
     missing = []
     for i in range(TOTAL_ITEMS):
         if i not in processed_values:
@@ -144,12 +153,13 @@ def run_chaos_test():
         print(f"✅ INTEGRITY CHECK PASSED: All {TOTAL_ITEMS} items processed.")
 
     # Check Queue empty
-    time.sleep(VISIBILITY_TIMEOUT + 1) # Wait for any zombie locks to expire
+    time.sleep(VISIBILITY_TIMEOUT + 1)  # Wait for any zombie locks to expire
     leftover = q.peek()
     if leftover:
         print(f"❌ FAILED: Queue not empty. Found item: {leftover}")
     else:
         print(f"✅ CLEANUP CHECK PASSED: Queue is empty.")
+
 
 if __name__ == "__main__":
     run_chaos_test()

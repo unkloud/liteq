@@ -15,12 +15,13 @@ DB_PATH = "chaos_test_B.db"
 GOOD_MSG = b"GOOD"
 BAD_MSG = b"BAD"
 
+
 def run_poison_pill_test():
     print("🔥 STARTING SCENARIO B (Poison Pill)")
 
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
-    
+
     # max_retries=3
     q = LiteQueue(DB_PATH, max_retries=3)
 
@@ -33,11 +34,11 @@ def run_poison_pill_test():
         q.put(GOOD_MSG + bytes([i]))
 
     print(">> Processing...")
-    
+
     processed_count = 0
-    
+
     start_time = time.time()
-    
+
     # Loop until done
     while True:
         try:
@@ -54,27 +55,29 @@ def run_poison_pill_test():
                     else:
                         print(f"   -> Processed GOOD MSG: {msg.data}")
                         processed_count += 1
-            
+
             if not found_msg:
                 # Check if we are done
                 # We need to wait enough for retries to happen.
                 # But if peek returns nothing and we waited enough, maybe we are done.
-                
+
                 # Check DLQ count
                 with sqlite3.connect(DB_PATH) as conn:
                     dlq_count = conn.execute("SELECT count(*) FROM dlq").fetchone()[0]
-                
+
                 # Check Main Queue count (including invisible)
                 with sqlite3.connect(DB_PATH) as conn:
-                    main_count = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
+                    main_count = conn.execute(
+                        "SELECT count(*) FROM messages"
+                    ).fetchone()[0]
 
                 if processed_count == 5 and dlq_count == 1 and main_count == 0:
                     break
-                
+
                 if time.time() - start_time > 10:
-                     print("❌ TIMEOUT waiting for completion.")
-                     break
-                
+                    print("❌ TIMEOUT waiting for completion.")
+                    break
+
                 time.sleep(0.1)
 
         except ValueError:
@@ -86,7 +89,7 @@ def run_poison_pill_test():
 
     # Validation
     print(">> Validation Phase")
-    
+
     # Check Good
     if processed_count != 5:
         print(f"❌ FAILED: Processed {processed_count}/5 good messages.")
@@ -96,21 +99,24 @@ def run_poison_pill_test():
     # Check DLQ
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("SELECT data, reason FROM dlq").fetchall()
-    
+
     if len(rows) == 1:
         data, reason = rows[0]
         if data == BAD_MSG and "Poison Pill" in reason:
-             print(f"✅ DLQ Verification PASSED: Found BAD_MSG with reason '{reason}'")
+            print(f"✅ DLQ Verification PASSED: Found BAD_MSG with reason '{reason}'")
         else:
-             print(f"❌ DLQ Verification FAILED: {rows}")
+            print(f"❌ DLQ Verification FAILED: {rows}")
     else:
-        print(f"❌ DLQ Verification FAILED: Found {len(rows)} items in DLQ (expected 1).")
+        print(
+            f"❌ DLQ Verification FAILED: Found {len(rows)} items in DLQ (expected 1)."
+        )
 
     # Check Main Queue Empty
     if q.peek():
         print("❌ FAILED: Main queue not empty.")
     else:
         print("✅ Main queue empty.")
+
 
 if __name__ == "__main__":
     run_poison_pill_test()

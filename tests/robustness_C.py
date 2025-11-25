@@ -13,12 +13,13 @@ logging.basicConfig(level=logging.INFO)
 
 DB_PATH = "chaos_test_C.db"
 
+
 def run_zombie_test():
     print("🔥 STARTING SCENARIO C (Zombie)")
 
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
-    
+
     q = LiteQueue(DB_PATH)
     msg_id = q.put(b"ZOMBIE")
     print(f">> Injected message {msg_id}")
@@ -26,7 +27,7 @@ def run_zombie_test():
     # Shared state
     events = []
     lock = threading.Lock()
-    
+
     start_time = time.time()
 
     def log(msg):
@@ -54,26 +55,26 @@ def run_zombie_test():
 
     # Wait 3 seconds
     time.sleep(3)
-    
+
     log("Worker 2: Popping...")
     q2 = LiteQueue(DB_PATH)
     msg2 = q2.pop(timeout=10)
     found_reappearing = False
-    
+
     if msg2:
         log(f"Worker 2: Got message {msg2.id}")
         if msg2.id == msg_id:
-             log("Worker 2: ID matches! Zombie re-acquired.")
-             q2._ack(msg2.id)
-             log("Worker 2: Deleted.")
-             found_reappearing = True
+            log("Worker 2: ID matches! Zombie re-acquired.")
+            q2._ack(msg2.id)
+            log("Worker 2: Deleted.")
+            found_reappearing = True
         else:
-             log("Worker 2: ID mismatch!")
+            log("Worker 2: ID mismatch!")
     else:
         log("Worker 2: Failed to pop (expected to find it)!")
 
     t1.join()
-    
+
     # Verify queue empty
     if q.peek():
         print("❌ FAILED: Queue not empty.")
@@ -85,6 +86,7 @@ def run_zombie_test():
         print("✅ SUCCESS: Message re-appeared after visibility timeout.")
     else:
         print("❌ FAILED: Message did not re-appear.")
+
 
 if __name__ == "__main__":
     run_zombie_test()
