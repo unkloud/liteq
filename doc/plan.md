@@ -374,7 +374,3 @@ if __name__ == "__main__":
 3. **If `database is locked` errors spam the console:**
     * *Diagnosis:* Your `timeout` in `sqlite3.connect` is too low, or you aren't using `BEGIN IMMEDIATE` correctly.
 
-### 5\. Next Step
-
-Would you like to proceed to the **Code Generation** phase using this robustness plan and the v1.2 specification (
-Binary/Integers)?
