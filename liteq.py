@@ -9,6 +9,11 @@ from typing import Generator, Optional
 # Ensure thread safety
 assert sqlite3.threadsafety in (1, 3), f"{sqlite3.threadsafety=}, expected 1 or 3"
 
+
+def uuid_v7() -> str:
+    return str(uuid.uuid7())  # noqa
+
+
 SQL_SCHEMA = """
              CREATE TABLE IF NOT EXISTS messages
              (
@@ -62,7 +67,7 @@ class LiteQueue:
     def put(self, data: bytes, qname: str = "default", delay: int = 0) -> str:
         now = int(time.time())
         visible_after = now + delay
-        msg_id = str(uuid.uuid7())
+        msg_id = uuid_v7()
 
         with self._get_conn() as conn:
             conn.execute(
