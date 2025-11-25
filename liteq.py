@@ -50,6 +50,7 @@ class Message:
 
 class LiteQueue:
     def __init__(self, filename: str, max_retries: int = 5):
+        assert filename != ":memory:", f"in-memory database isn't supported, sorry"
         self.filename = filename
         self.max_retries = max_retries
         self._init_db()
@@ -80,21 +81,40 @@ class LiteQueue:
         now = int(time.time())
         conn = self._get_conn()
         try:
-            conn.execute("BEGIN IMMEDIATE")
-            cursor = conn.execute(
-                """
-                SELECT id, data, queue_name, retry_count, created_at
-                FROM messages
-                WHERE queue_name = ?
-                  AND visible_after <= ?
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-                (qname, now),
-            )
-            row = cursor.fetchone()
+            while True:
+                conn.execute("BEGIN IMMEDIATE")
+                cursor = conn.execute(
+                    """
+                    SELECT id, data, queue_name, retry_count, created_at
+                    FROM messages
+                    WHERE queue_name = ?
+                      AND visible_after <= ?
+                    ORDER BY created_at
+                    LIMIT 1
+                    """,
+                    (qname, now),
+                )
+                row = cursor.fetchone()
 
-            if row:
+                if not row:
+                    conn.rollback()
+                    return None
+
+                if row["retry_count"] + 1 > self.max_retries:
+                    conn.execute(
+                        "INSERT INTO dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
+                        (
+                            row["id"],
+                            row["queue_name"],
+                            row["data"],
+                            now,
+                            f"Max retries exceeded during pop ({self.max_retries})",
+                        ),
+                    )
+                    conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+                    conn.commit()
+                    continue
+
                 msg = Message(
                     id=row["id"],
                     data=row["data"],
@@ -103,14 +123,11 @@ class LiteQueue:
                     created_at=row["created_at"],
                 )
                 conn.execute(
-                    "UPDATE messages SET visible_after = ? WHERE id = ?",
+                    "UPDATE messages SET visible_after = ?, retry_count = retry_count + 1 WHERE id = ?",
                     (now + timeout, msg.id),
                 )
                 conn.commit()
                 return msg
-            else:
-                conn.rollback()
-                return None
         except Exception:
             conn.rollback()
             raise

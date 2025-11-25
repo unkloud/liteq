@@ -111,12 +111,10 @@ class TestLiteQueue(unittest.TestCase):
             conn.execute("UPDATE messages SET visible_after = 0")
 
         # Second failure (retry_count becomes 2 > 1) -> DLQ
-        try:
-            with self.q.process() as msg:
-                self.assertEqual(msg.retry_count, 1)
-                raise ValueError("fail 2")
-        except ValueError:
-            pass
+        # The pop() method will see that retry_count + 1 > max_retries,
+        # so it will move it to DLQ immediately and return None.
+        with self.q.process() as msg:
+            self.assertIsNone(msg)
 
         # Should be gone from messages
         self.assertIsNone(self.q.peek())
@@ -125,7 +123,7 @@ class TestLiteQueue(unittest.TestCase):
         with sqlite3.connect(DB_FILE) as conn:
             row = conn.execute("SELECT data, reason FROM dlq").fetchone()
             self.assertEqual(row[0], b"bad_job")
-            self.assertEqual(row[1], "fail 2")
+            self.assertIn("Max retries exceeded", row[1])
 
 
 if __name__ == "__main__":
