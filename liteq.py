@@ -188,9 +188,9 @@ class LiteQueue:
 
     @contextmanager
     def process(
-        self, qname: str = "default", timeout: int = 60
+        self, qname: str = "default", invisible_seconds: int = 60
     ) -> Generator[Optional[Message], None, None]:
-        msg = self.pop(qname, timeout)
+        msg = self.pop(qname, invisible_seconds)
         if not msg:
             yield None
             return
@@ -198,18 +198,18 @@ class LiteQueue:
         try:
             yield msg
             # If we get here, success
-            self._ack(msg.id)
+            self.delete(msg.id)
         except Exception as e:
             # Failure
-            self._nack(msg, str(e))
+            self.process_failed(msg, str(e))
             raise
 
-    def _ack(self, msg_id: str):
+    def delete(self, msg_id: str):
         with self._get_conn() as conn:
             conn.execute("DELETE FROM liteq_messages WHERE id = ?", (msg_id,))
         logger.debug(f"Ack message {msg_id}")
 
-    def _nack(self, msg: Message, reason: str):
+    def process_failed(self, msg: Message, reason: str):
         new_retry_count = msg.retry_count + 1
         logger.warning(f"Nack message {msg.id}: {reason}")
 

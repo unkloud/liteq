@@ -141,7 +141,7 @@ class TestLiteQueue(unittest.TestCase):
         msg = self.q.pop()
         self.assertEqual(self.q.qsize("default"), 1)
 
-        self.q._ack(msg.id)
+        self.q.delete(msg.id)
         self.assertEqual(self.q.qsize("default"), 0)
         self.assertTrue(self.q.empty())
 

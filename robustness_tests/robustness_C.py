@@ -45,7 +45,7 @@ def run_zombie_test():
             time.sleep(5)
             log("Worker 1: Woke up. Deleting...")
             # This should fail silently or just do nothing as row is gone
-            local_q._ack(msg.id)
+            local_q.delete(msg.id)
             log("Worker 1: Deleted.")
         else:
             log("Worker 1: Failed to pop!")
@@ -65,7 +65,7 @@ def run_zombie_test():
         log(f"Worker 2: Got message {msg2.id}")
         if msg2.id == msg_id:
             log("Worker 2: ID matches! Zombie re-acquired.")
-            q2._ack(msg2.id)
+            q2.delete(msg2.id)
             log("Worker 2: Deleted.")
             found_reappearing = True
         else:

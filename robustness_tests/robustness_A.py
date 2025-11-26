@@ -97,7 +97,7 @@ def run_chaos_test():
                 processed_values.add(val)
 
             # Access protected _ack for test
-            q._ack(msg.id)
+            q.delete(msg.id)
 
     print(f">> Unleashing {WORKER_THREADS} Chaos Workers...")
     with ThreadPoolExecutor(max_workers=WORKER_THREADS) as executor:
