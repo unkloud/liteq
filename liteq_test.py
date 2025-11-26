@@ -2,6 +2,7 @@ import unittest
 import os
 import time
 import sqlite3
+import threading
 from liteq import LiteQueue, Message
 
 DB_FILE = "test_queue.db"
@@ -124,6 +125,49 @@ class TestLiteQueue(unittest.TestCase):
             row = conn.execute("SELECT data, reason FROM dlq").fetchone()
             self.assertEqual(row[0], b"bad_job")
             self.assertIn("Max retries exceeded", row[1])
+
+    def test_qsize_empty(self):
+        self.assertTrue(self.q.empty())
+        self.assertEqual(self.q.qsize("default"), 0)
+
+        self.q.put(b"data")
+        self.assertFalse(self.q.empty())
+        self.assertEqual(self.q.qsize("default"), 1)
+
+        self.q.put(b"other", qname="other")
+        self.assertEqual(self.q.qsize("other"), 1)
+        self.assertEqual(self.q.qsize("default"), 1)
+
+        msg = self.q.pop()
+        self.assertEqual(self.q.qsize("default"), 1)
+
+        self.q._ack(msg.id)
+        self.assertEqual(self.q.qsize("default"), 0)
+        self.assertTrue(self.q.empty())
+
+    def test_join(self):
+        self.q.put(b"job1")
+        self.q.put(b"job2")
+
+        def worker():
+            time.sleep(0.2)
+            with self.q.process() as msg:
+                pass
+            time.sleep(0.2)
+            with self.q.process() as msg:
+                pass
+
+        t = threading.Thread(target=worker)
+        t.start()
+
+        start_time = time.time()
+        self.q.join()
+        end_time = time.time()
+
+        t.join()
+
+        self.assertTrue(self.q.empty())
+        self.assertGreater(end_time - start_time, 0.3)
 
 
 if __name__ == "__main__":

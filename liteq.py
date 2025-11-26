@@ -5,7 +5,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Generator, Optional
 
-
 # Ensure thread safety
 assert sqlite3.threadsafety in (1, 3), f"{sqlite3.threadsafety=}, expected 1 or 3"
 
@@ -158,6 +157,20 @@ class LiteQueue:
                     created_at=row["created_at"],
                 )
         return None
+
+    def qsize(self, qname: str) -> int:
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE queue_name = ?", (qname,)
+            )
+            return cursor.fetchone()[0]
+
+    def empty(self, qname: str = "default") -> bool:
+        return self.qsize(qname) == 0
+
+    def join(self, qname: str = "default"):
+        while not self.empty(qname):
+            time.sleep(0.1)
 
     @contextmanager
     def process(
