@@ -5,7 +5,7 @@ import sqlite3
 import threading
 from liteq import LiteQueue, Message
 
-DB_FILE = "test_queue.db"
+DB_FILE = "/tmp/test_queue.db"
 
 
 class TestLiteQueue(unittest.TestCase):
@@ -40,7 +40,7 @@ class TestLiteQueue(unittest.TestCase):
     def test_integer_timestamps(self):
         self.q.put(b"data", delay=0)
         with sqlite3.connect(DB_FILE) as conn:
-            row = conn.execute("SELECT visible_after FROM messages").fetchone()
+            row = conn.execute("SELECT visible_after FROM liteq_messages").fetchone()
             self.assertIsInstance(row[0], int)
 
     def test_visibility_timeout(self):
@@ -87,7 +87,7 @@ class TestLiteQueue(unittest.TestCase):
         # Check DB directly for retry_count.
 
         with sqlite3.connect(DB_FILE) as conn:
-            row = conn.execute("SELECT retry_count FROM messages").fetchone()
+            row = conn.execute("SELECT retry_count FROM liteq_messages").fetchone()
             self.assertEqual(row[0], 1)
 
     def test_dlq_logic(self):
@@ -109,7 +109,7 @@ class TestLiteQueue(unittest.TestCase):
         # Or we can manually update visible_after in DB to 0 for testing.
 
         with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("UPDATE messages SET visible_after = 0")
+            conn.execute("UPDATE liteq_messages SET visible_after = 0")
 
         # Second failure (retry_count becomes 2 > 1) -> DLQ
         # The pop() method will see that retry_count + 1 > max_retries,
@@ -122,7 +122,7 @@ class TestLiteQueue(unittest.TestCase):
 
         # Should be in DLQ
         with sqlite3.connect(DB_FILE) as conn:
-            row = conn.execute("SELECT data, reason FROM dlq").fetchone()
+            row = conn.execute("SELECT data, reason FROM liteq_dlq").fetchone()
             self.assertEqual(row[0], b"bad_job")
             self.assertIn("Max retries exceeded", row[1])
 

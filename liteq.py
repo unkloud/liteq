@@ -14,7 +14,7 @@ def uuid_v7() -> str:
 
 
 SQL_SCHEMA = """
-             CREATE TABLE IF NOT EXISTS messages
+             CREATE TABLE IF NOT EXISTS liteq_messages
              (
                  id            TEXT PRIMARY KEY, -- UUIDv7
                  queue_name    TEXT NOT NULL DEFAULT 'default',
@@ -25,9 +25,9 @@ SQL_SCHEMA = """
              );
 
              CREATE INDEX IF NOT EXISTS idx_pop
-                 ON messages (queue_name, visible_after, created_at);
+                 ON liteq_messages (queue_name, visible_after, created_at);
 
-             CREATE TABLE IF NOT EXISTS dlq
+             CREATE TABLE IF NOT EXISTS liteq_dlq
              (
                  id         TEXT PRIMARY KEY,
                  queue_name TEXT,
@@ -71,7 +71,7 @@ class LiteQueue:
 
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT INTO messages (id, queue_name, data, visible_after, retry_count, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO liteq_messages (id, queue_name, data, visible_after, retry_count, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (msg_id, qname, data, visible_after, 0, now),
             )
         return msg_id
@@ -85,7 +85,7 @@ class LiteQueue:
                 cursor = conn.execute(
                     """
                     SELECT id, data, queue_name, retry_count, created_at
-                    FROM messages
+                    FROM liteq_messages
                     WHERE queue_name = ?
                       AND visible_after <= ?
                     ORDER BY created_at
@@ -101,7 +101,7 @@ class LiteQueue:
 
                 if row["retry_count"] + 1 > self.max_retries:
                     conn.execute(
-                        "INSERT INTO dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
+                        "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
                         (
                             row["id"],
                             row["queue_name"],
@@ -110,7 +110,9 @@ class LiteQueue:
                             f"Max retries exceeded during pop ({self.max_retries})",
                         ),
                     )
-                    conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+                    conn.execute(
+                        "DELETE FROM liteq_messages WHERE id = ?", (row["id"],)
+                    )
                     conn.commit()
                     continue
 
@@ -122,7 +124,7 @@ class LiteQueue:
                     created_at=row["created_at"],
                 )
                 conn.execute(
-                    "UPDATE messages SET visible_after = ?, retry_count = retry_count + 1 WHERE id = ?",
+                    "UPDATE liteq_messages SET visible_after = ?, retry_count = retry_count + 1 WHERE id = ?",
                     (now + timeout, msg.id),
                 )
                 conn.commit()
@@ -139,7 +141,7 @@ class LiteQueue:
             cursor = conn.execute(
                 """
                 SELECT id, data, queue_name, retry_count, created_at
-                FROM messages
+                FROM liteq_messages
                 WHERE queue_name = ?
                   AND visible_after <= ?
                 ORDER BY created_at ASC
@@ -161,7 +163,7 @@ class LiteQueue:
     def qsize(self, qname: str) -> int:
         with self._get_conn() as conn:
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM messages WHERE queue_name = ?", (qname,)
+                "SELECT COUNT(*) FROM liteq_messages WHERE queue_name = ?", (qname,)
             )
             return cursor.fetchone()[0]
 
@@ -174,7 +176,7 @@ class LiteQueue:
 
     @contextmanager
     def process(
-        self, qname: str = "default", timeout: int = 60
+            self, qname: str = "default", timeout: int = 60
     ) -> Generator[Optional[Message], None, None]:
         msg = self.pop(qname, timeout)
         if not msg:
@@ -192,7 +194,7 @@ class LiteQueue:
 
     def _ack(self, msg_id: str):
         with self._get_conn() as conn:
-            conn.execute("DELETE FROM messages WHERE id = ?", (msg_id,))
+            conn.execute("DELETE FROM liteq_messages WHERE id = ?", (msg_id,))
 
     def _nack(self, msg: Message, reason: str):
         new_retry_count = msg.retry_count + 1
@@ -203,15 +205,15 @@ class LiteQueue:
                 now = int(time.time())
                 conn.execute("BEGIN IMMEDIATE")
                 conn.execute(
-                    "INSERT INTO dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
                     (msg.id, msg.queue_name, msg.data, now, reason),
                 )
-                conn.execute("DELETE FROM messages WHERE id = ?", (msg.id,))
+                conn.execute("DELETE FROM liteq_messages WHERE id = ?", (msg.id,))
                 conn.commit()
             else:
                 # Update retry_count.
                 # Note: 'visible_after' is already set to now + timeout from pop().
                 conn.execute(
-                    "UPDATE messages SET retry_count = ? WHERE id = ?",
+                    "UPDATE liteq_messages SET retry_count = ? WHERE id = ?",
                     (new_retry_count, msg.id),
                 )
