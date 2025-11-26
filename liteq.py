@@ -66,6 +66,7 @@ class LiteQueue:
     def _init_db(self):
         with self._get_conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
             conn.executescript(SQL_SCHEMA)
 
     def put(self, data: bytes, qname: str = "default", delay: int = 0) -> str:
@@ -217,7 +218,6 @@ class LiteQueue:
             if new_retry_count > self.max_retries:
                 # Move to DLQ
                 now = int(time.time())
-                conn.execute("BEGIN IMMEDIATE")
                 conn.execute(
                     "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
                     (msg.id, msg.queue_name, msg.data, now, reason),

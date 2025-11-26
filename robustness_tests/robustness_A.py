@@ -32,7 +32,7 @@ def run_chaos_test():
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
 
-    q = LiteQueue(DB_PATH)
+    q = LiteQueue(DB_PATH, max_retries=10)
 
     # 2. Producer Phase
     print(f">> Producing {TOTAL_ITEMS} items with {PRODUCER_THREADS} threads...")
