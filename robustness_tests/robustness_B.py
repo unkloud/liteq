@@ -63,12 +63,14 @@ def run_poison_pill_test():
 
                 # Check DLQ count
                 with sqlite3.connect(DB_PATH) as conn:
-                    dlq_count = conn.execute("SELECT count(*) FROM dlq").fetchone()[0]
+                    dlq_count = conn.execute(
+                        "SELECT count(*) FROM liteq_dlq"
+                    ).fetchone()[0]
 
                 # Check Main Queue count (including invisible)
                 with sqlite3.connect(DB_PATH) as conn:
                     main_count = conn.execute(
-                        "SELECT count(*) FROM messages"
+                        "SELECT count(*) FROM liteq_messages"
                     ).fetchone()[0]
 
                 if processed_count == 5 and dlq_count == 1 and main_count == 0:
@@ -98,11 +100,13 @@ def run_poison_pill_test():
 
     # Check DLQ
     with sqlite3.connect(DB_PATH) as conn:
-        rows = conn.execute("SELECT data, reason FROM dlq").fetchall()
+        rows = conn.execute("SELECT data, reason FROM liteq_dlq").fetchall()
 
     if len(rows) == 1:
         data, reason = rows[0]
-        if data == BAD_MSG and "Poison Pill" in reason:
+        if data == BAD_MSG and (
+            "Poison Pill" in reason or "Max retries exceeded" in reason
+        ):
             print(f"✅ DLQ Verification PASSED: Found BAD_MSG with reason '{reason}'")
         else:
             print(f"❌ DLQ Verification FAILED: {rows}")

@@ -1,9 +1,12 @@
+import logging
 import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Generator, Optional
+
+logger = logging.getLogger(__name__)
 
 # Ensure thread safety
 assert sqlite3.threadsafety in (1, 3), f"{sqlite3.threadsafety=}, expected 1 or 3"
@@ -53,6 +56,7 @@ class LiteQueue:
         self.filename = filename
         self.max_retries = max_retries
         self._init_db()
+        logger.debug(f"LiteQueue initialized: {self.filename}")
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.filename, timeout=10.0)
@@ -74,6 +78,7 @@ class LiteQueue:
                 "INSERT INTO liteq_messages (id, queue_name, data, visible_after, retry_count, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (msg_id, qname, data, visible_after, 0, now),
             )
+        logger.debug(f"Put message {msg_id} to queue {qname}")
         return msg_id
 
     def pop(self, qname: str = "default", timeout: int = 60) -> Optional[Message]:
@@ -100,6 +105,9 @@ class LiteQueue:
                     return None
 
                 if row["retry_count"] + 1 > self.max_retries:
+                    logger.warning(
+                        f"Message {row['id']} exceeded max retries ({self.max_retries}). Moving to DLQ."
+                    )
                     conn.execute(
                         "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
                         (
@@ -128,9 +136,11 @@ class LiteQueue:
                     (now + timeout, msg.id),
                 )
                 conn.commit()
+                logger.debug(f"Popped message {msg.id} from queue {msg.queue_name}")
                 return msg
         except Exception:
             conn.rollback()
+            logger.exception("Error during pop")
             raise
         finally:
             conn.close()
@@ -176,7 +186,7 @@ class LiteQueue:
 
     @contextmanager
     def process(
-            self, qname: str = "default", timeout: int = 60
+        self, qname: str = "default", timeout: int = 60
     ) -> Generator[Optional[Message], None, None]:
         msg = self.pop(qname, timeout)
         if not msg:
@@ -195,9 +205,11 @@ class LiteQueue:
     def _ack(self, msg_id: str):
         with self._get_conn() as conn:
             conn.execute("DELETE FROM liteq_messages WHERE id = ?", (msg_id,))
+        logger.debug(f"Ack message {msg_id}")
 
     def _nack(self, msg: Message, reason: str):
         new_retry_count = msg.retry_count + 1
+        logger.warning(f"Nack message {msg.id}: {reason}")
 
         with self._get_conn() as conn:
             if new_retry_count > self.max_retries:
@@ -210,6 +222,7 @@ class LiteQueue:
                 )
                 conn.execute("DELETE FROM liteq_messages WHERE id = ?", (msg.id,))
                 conn.commit()
+                logger.warning(f"Message {msg.id} moved to DLQ from nack: {reason}")
             else:
                 # Update retry_count.
                 # Note: 'visible_after' is already set to now + timeout from pop().
