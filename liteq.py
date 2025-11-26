@@ -50,6 +50,21 @@ class Message:
     created_at: int
 
 
+def _move_to_dlq(
+    conn: sqlite3.Connection,
+    msg_id: str,
+    qname: str,
+    data: bytes,
+    reason: str,
+):
+    now = int(time.time())
+    conn.execute(
+        "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
+        (msg_id, qname, data, now, reason),
+    )
+    conn.execute("DELETE FROM liteq_messages WHERE id = ?", (msg_id,))
+
+
 class LiteQueue:
     def __init__(self, filename: str, max_retries: int = 5):
         assert filename != ":memory:", f"in-memory database isn't supported, sorry"
@@ -111,18 +126,12 @@ class LiteQueue:
                     logger.warning(
                         f"Message {row['id']} exceeded max retries ({self.max_retries}). Moving to DLQ."
                     )
-                    conn.execute(
-                        "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
-                        (
-                            row["id"],
-                            row["queue_name"],
-                            row["data"],
-                            now,
-                            f"Max retries exceeded during pop ({self.max_retries})",
-                        ),
-                    )
-                    conn.execute(
-                        "DELETE FROM liteq_messages WHERE id = ?", (row["id"],)
+                    _move_to_dlq(
+                        conn,
+                        row["id"],
+                        row["queue_name"],
+                        row["data"],
+                        f"Max retries exceeded during pop ({self.max_retries})",
                     )
                     conn.commit()
                     continue
@@ -189,9 +198,9 @@ class LiteQueue:
 
     @contextmanager
     def process(
-        self, qname: str = "default", invisible_seconds: int = 60
+        self, qname: str = "default", invisible_on_receive: int = 60
     ) -> Generator[Optional[Message], None, None]:
-        msg = self.pop(qname, invisible_seconds)
+        msg = self.pop(qname, invisible_on_receive)
         if not msg:
             yield None
             return
@@ -212,19 +221,14 @@ class LiteQueue:
 
     def process_failed(self, msg: Message, reason: str):
         new_retry_count = msg.retry_count + 1
-        logger.warning(f"Nack message {msg.id}: {reason}")
+        logger.warning(f"process_failed: {msg.id=}: {reason=}")
 
         with self._get_conn() as conn:
             if new_retry_count > self.max_retries:
                 # Move to DLQ
-                now = int(time.time())
-                conn.execute(
-                    "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
-                    (msg.id, msg.queue_name, msg.data, now, reason),
-                )
-                conn.execute("DELETE FROM liteq_messages WHERE id = ?", (msg.id,))
+                _move_to_dlq(conn, msg.id, msg.queue_name, msg.data, reason)
                 conn.commit()
-                logger.warning(f"Message {msg.id} moved to DLQ from nack: {reason}")
+                logger.warning(f"Message {msg.id} moved to DLQ from reject: {reason}")
             else:
                 # Update retry_count.
                 # Note: 'visible_after' is already set to now + timeout from pop().
