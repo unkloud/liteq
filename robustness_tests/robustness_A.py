@@ -73,7 +73,7 @@ def run_chaos_test():
         # YES.
 
         while not stop_event.is_set():
-            msg = q.pop(timeout=VISIBILITY_TIMEOUT)
+            msg = q.pop(invisible_seconds=VISIBILITY_TIMEOUT)
 
             if not msg:
                 # If queue is empty, we might be done or just temporarily empty due to locks/retries

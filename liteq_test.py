@@ -45,7 +45,7 @@ class TestLiteQueue(unittest.TestCase):
 
     def test_visibility_timeout(self):
         self.q.put(b"data")
-        self.q.pop(timeout=1)  # invisible for 1 sec
+        self.q.pop(invisible_seconds=1)  # invisible for 1 sec
 
         msg = self.q.pop()
         self.assertIsNone(msg)

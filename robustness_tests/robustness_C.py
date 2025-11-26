@@ -39,7 +39,7 @@ def run_zombie_test():
         # Separate connection might be safer but LiteQueue handles it
         local_q = LiteQueue(DB_PATH)
         log("Worker 1: Popping...")
-        msg = local_q.pop(timeout=2)
+        msg = local_q.pop(invisible_seconds=2)
         if msg:
             log(f"Worker 1: Got message {msg.id}. Sleeping 5s...")
             time.sleep(5)
@@ -58,7 +58,7 @@ def run_zombie_test():
 
     log("Worker 2: Popping...")
     q2 = LiteQueue(DB_PATH)
-    msg2 = q2.pop(timeout=10)
+    msg2 = q2.pop(invisible_seconds=10)
     found_reappearing = False
 
     if msg2:

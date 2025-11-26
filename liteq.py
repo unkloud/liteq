@@ -81,7 +81,9 @@ class LiteQueue:
         logger.debug(f"Put message {msg_id} to queue {qname}")
         return msg_id
 
-    def pop(self, qname: str = "default", timeout: int = 60) -> Optional[Message]:
+    def pop(
+        self, qname: str = "default", invisible_seconds: int = 60
+    ) -> Optional[Message]:
         now = int(time.time())
         conn = self._get_conn()
         try:
@@ -133,7 +135,7 @@ class LiteQueue:
                 )
                 conn.execute(
                     "UPDATE liteq_messages SET visible_after = ?, retry_count = retry_count + 1 WHERE id = ?",
-                    (now + timeout, msg.id),
+                    (now + invisible_seconds, msg.id),
                 )
                 conn.commit()
                 logger.debug(f"Popped message {msg.id} from queue {msg.queue_name}")

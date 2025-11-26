@@ -275,7 +275,7 @@ def run_chaos_test():
     def chaos_worker(worker_id):
         while not stop_event.is_set():
             # Try to pop with a short timeout
-            msg = q.pop(timeout=VISIBILITY_TIMEOUT)
+            msg = q.pop(invisible_seconds=VISIBILITY_TIMEOUT)
 
             if not msg:
                 time.sleep(0.1)
@@ -373,4 +373,3 @@ if __name__ == "__main__":
       `UPDATE ... visible_after` logic in your SQL.
 3. **If `database is locked` errors spam the console:**
     * *Diagnosis:* Your `timeout` in `sqlite3.connect` is too low, or you aren't using `BEGIN IMMEDIATE` correctly.
-
