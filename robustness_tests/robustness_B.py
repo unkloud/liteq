@@ -7,7 +7,12 @@ import sqlite3
 # Add root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from liteq import LiteQueue
+from liteq import (
+    LiteQueue,
+    SQL_COUNT_DLQ,
+    SQL_COUNT_ALL_MESSAGES,
+    SQL_SELECT_DLQ_DATA_REASON,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -63,15 +68,11 @@ def run_poison_pill_test():
 
                 # Check DLQ count
                 with sqlite3.connect(DB_PATH) as conn:
-                    dlq_count = conn.execute(
-                        "SELECT count(*) FROM liteq_dlq"
-                    ).fetchone()[0]
+                    dlq_count = conn.execute(SQL_COUNT_DLQ).fetchone()[0]
 
                 # Check Main Queue count (including invisible)
                 with sqlite3.connect(DB_PATH) as conn:
-                    main_count = conn.execute(
-                        "SELECT count(*) FROM liteq_messages"
-                    ).fetchone()[0]
+                    main_count = conn.execute(SQL_COUNT_ALL_MESSAGES).fetchone()[0]
 
                 if processed_count == 5 and dlq_count == 1 and main_count == 0:
                     break
@@ -100,7 +101,7 @@ def run_poison_pill_test():
 
     # Check DLQ
     with sqlite3.connect(DB_PATH) as conn:
-        rows = conn.execute("SELECT data, reason FROM liteq_dlq").fetchall()
+        rows = conn.execute(SQL_SELECT_DLQ_DATA_REASON).fetchall()
 
     if len(rows) == 1:
         data, reason = rows[0]

@@ -41,6 +41,45 @@ SQL_SCHEMA = """
              """
 
 
+SQL_PRAGMA_WAL = "PRAGMA journal_mode=WAL;"
+SQL_PRAGMA_SYNCHRONOUS = "PRAGMA synchronous=NORMAL;"
+
+SQL_DLQ_INSERT = "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)"
+SQL_MESSAGES_DELETE = "DELETE FROM liteq_messages WHERE id = ?"
+SQL_MESSAGES_INSERT = (
+    "INSERT INTO liteq_messages "
+    "(id, queue_name, data, visible_after, retry_count, created_at) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
+
+SQL_MESSAGES_SELECT_NEXT = """
+    SELECT id, data, queue_name, retry_count, created_at
+    FROM liteq_messages
+    WHERE queue_name = ?
+      AND visible_after <= ?
+    ORDER BY created_at ASC
+    LIMIT 1
+"""
+
+SQL_MESSAGES_UPDATE_VISIBLE = (
+    "UPDATE liteq_messages "
+    "SET visible_after = ?, retry_count = retry_count + 1 "
+    "WHERE id = ?"
+)
+
+SQL_MESSAGES_UPDATE_RETRY = "UPDATE liteq_messages SET retry_count = ? WHERE id = ?"
+SQL_MESSAGES_COUNT = "SELECT COUNT(*) FROM liteq_messages WHERE queue_name = ?"
+SQL_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
+
+# Debug / Test Helpers
+SQL_SELECT_VISIBLE_AFTER = "SELECT visible_after FROM liteq_messages"
+SQL_SELECT_RETRY_COUNT = "SELECT retry_count FROM liteq_messages"
+SQL_RESET_MESSAGES_VISIBILITY = "UPDATE liteq_messages SET visible_after = 0"
+SQL_SELECT_DLQ_DATA_REASON = "SELECT data, reason FROM liteq_dlq"
+SQL_COUNT_DLQ = "SELECT count(*) FROM liteq_dlq"
+SQL_COUNT_ALL_MESSAGES = "SELECT count(*) FROM liteq_messages"
+
+
 @dataclass
 class Message:
     id: str
@@ -59,10 +98,10 @@ def _move_to_dlq(
 ):
     now = int(time.time())
     conn.execute(
-        "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)",
+        SQL_DLQ_INSERT,
         (msg_id, qname, data, now, reason),
     )
-    conn.execute("DELETE FROM liteq_messages WHERE id = ?", (msg_id,))
+    conn.execute(SQL_MESSAGES_DELETE, (msg_id,))
 
 
 class LiteQueue:
@@ -80,8 +119,8 @@ class LiteQueue:
 
     def _init_db(self):
         with self._get_conn() as conn:
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute(SQL_PRAGMA_WAL)
+            conn.execute(SQL_PRAGMA_SYNCHRONOUS)
             conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DDL, False)
             conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DML, False)
             conn.setconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_FKEY, True)
@@ -89,12 +128,12 @@ class LiteQueue:
 
     def put(self, data: bytes, qname: str = "default", delay: int = 0) -> str:
         now = int(time.time())
-        visible_after = now + delay
+        visible_after = int(now + delay)
         msg_id = uuid_v7()
 
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT INTO liteq_messages (id, queue_name, data, visible_after, retry_count, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                SQL_MESSAGES_INSERT,
                 (msg_id, qname, data, visible_after, 0, now),
             )
         logger.debug(f"Put message {msg_id} to queue {qname}")
@@ -107,16 +146,9 @@ class LiteQueue:
         conn = self._get_conn()
         try:
             while True:
-                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(SQL_BEGIN_IMMEDIATE)
                 cursor = conn.execute(
-                    """
-                    SELECT id, data, queue_name, retry_count, created_at
-                    FROM liteq_messages
-                    WHERE queue_name = ?
-                      AND visible_after <= ?
-                    ORDER BY created_at
-                    LIMIT 1
-                    """,
+                    SQL_MESSAGES_SELECT_NEXT,
                     (qname, now),
                 )
                 row = cursor.fetchone()
@@ -147,8 +179,8 @@ class LiteQueue:
                     created_at=row["created_at"],
                 )
                 conn.execute(
-                    "UPDATE liteq_messages SET visible_after = ?, retry_count = retry_count + 1 WHERE id = ?",
-                    (now + invisible_seconds, msg.id),
+                    SQL_MESSAGES_UPDATE_VISIBLE,
+                    (int(now + invisible_seconds), msg.id),
                 )
                 conn.commit()
                 logger.debug(f"Popped message {msg.id} from queue {msg.queue_name}")
@@ -164,14 +196,7 @@ class LiteQueue:
         now = int(time.time())
         with self._get_conn() as conn:
             cursor = conn.execute(
-                """
-                SELECT id, data, queue_name, retry_count, created_at
-                FROM liteq_messages
-                WHERE queue_name = ?
-                  AND visible_after <= ?
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
+                SQL_MESSAGES_SELECT_NEXT,
                 (qname, now),
             )
             row = cursor.fetchone()
@@ -187,9 +212,7 @@ class LiteQueue:
 
     def qsize(self, qname: str) -> int:
         with self._get_conn() as conn:
-            cursor = conn.execute(
-                "SELECT COUNT(*) FROM liteq_messages WHERE queue_name = ?", (qname,)
-            )
+            cursor = conn.execute(SQL_MESSAGES_COUNT, (qname,))
             return cursor.fetchone()[0]
 
     def empty(self, qname: str = "default") -> bool:
@@ -219,7 +242,7 @@ class LiteQueue:
 
     def delete(self, msg_id: str):
         with self._get_conn() as conn:
-            conn.execute("DELETE FROM liteq_messages WHERE id = ?", (msg_id,))
+            conn.execute(SQL_MESSAGES_DELETE, (msg_id,))
         logger.debug(f"Ack message {msg_id}")
 
     def process_failed(self, msg: Message, reason: str):
@@ -236,6 +259,6 @@ class LiteQueue:
                 # Update retry_count.
                 # Note: 'visible_after' is already set to now + timeout from pop().
                 conn.execute(
-                    "UPDATE liteq_messages SET retry_count = ? WHERE id = ?",
+                    SQL_MESSAGES_UPDATE_RETRY,
                     (new_retry_count, msg.id),
                 )
