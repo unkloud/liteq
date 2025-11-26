@@ -44,7 +44,7 @@ def run_poison_pill_test():
         try:
             found_msg = False
             # Use short timeout for faster retries
-            with q.process(invisible_on_receive=0.2) as msg:
+            with q.consume(invisible_on_receive=0.2) as msg:
                 if msg is None:
                     pass
                 else:

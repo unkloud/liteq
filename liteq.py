@@ -25,7 +25,7 @@ SQL_SCHEMA = """
                  visible_after INTEGER,          -- UTC Timestamp (Seconds)
                  retry_count   INTEGER       DEFAULT 0,
                  created_at    INTEGER           -- UTC Timestamp (Seconds)
-             );
+             ) STRICT;
 
              CREATE INDEX IF NOT EXISTS idx_pop
                  ON liteq_messages (queue_name, visible_after, created_at);
@@ -37,7 +37,7 @@ SQL_SCHEMA = """
                  data       BLOB,
                  failed_at  INTEGER, -- UTC Timestamp (Seconds)
                  reason     TEXT
-             ); \
+             ) STRICT;
              """
 
 
@@ -82,6 +82,9 @@ class LiteQueue:
         with self._get_conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DDL, False)
+            conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DML, False)
+            conn.setconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_FKEY, True)
             conn.executescript(SQL_SCHEMA)
 
     def put(self, data: bytes, qname: str = "default", delay: int = 0) -> str:
@@ -197,7 +200,7 @@ class LiteQueue:
             time.sleep(0.1)
 
     @contextmanager
-    def process(
+    def consume(
         self, qname: str = "default", invisible_on_receive: int = 60
     ) -> Generator[Optional[Message], None, None]:
         msg = self.pop(qname, invisible_on_receive)

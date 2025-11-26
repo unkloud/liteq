@@ -66,7 +66,7 @@ class TestLiteQueue(unittest.TestCase):
 
     def test_process_success(self):
         self.q.put(b"job")
-        with self.q.process() as msg:
+        with self.q.consume() as msg:
             self.assertEqual(msg.data, b"job")
 
         # Should be deleted
@@ -76,7 +76,7 @@ class TestLiteQueue(unittest.TestCase):
         self.q.put(b"job")
 
         try:
-            with self.q.process() as msg:
+            with self.q.consume() as msg:
                 raise ValueError("fail")
         except ValueError:
             pass
@@ -97,7 +97,7 @@ class TestLiteQueue(unittest.TestCase):
 
         # First failure
         try:
-            with self.q.process() as msg:
+            with self.q.consume() as msg:
                 raise ValueError("fail 1")
         except ValueError:
             pass
@@ -114,7 +114,7 @@ class TestLiteQueue(unittest.TestCase):
         # Second failure (retry_count becomes 2 > 1) -> DLQ
         # The pop() method will see that retry_count + 1 > max_retries,
         # so it will move it to DLQ immediately and return None.
-        with self.q.process() as msg:
+        with self.q.consume() as msg:
             self.assertIsNone(msg)
 
         # Should be gone from messages
@@ -151,10 +151,10 @@ class TestLiteQueue(unittest.TestCase):
 
         def worker():
             time.sleep(0.2)
-            with self.q.process() as msg:
+            with self.q.consume() as msg:
                 pass
             time.sleep(0.2)
-            with self.q.process() as msg:
+            with self.q.consume() as msg:
                 pass
 
         t = threading.Thread(target=worker)

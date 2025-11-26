@@ -108,7 +108,7 @@ obj = {"task": "heavy_computation", "params": [1, 2, 3]}
 q.put(pickle.dumps(obj))
 
 # Consumer
-with q.process() as msg:
+with q.consume() as msg:
     if msg:
         task = pickle.loads(msg.data)
         do_work(task)
