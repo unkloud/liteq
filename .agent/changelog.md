@@ -5,3 +5,7 @@ Refactored logging configuration to avoid interference with application logging 
 Added logging messages to critical paths and exception handling in liteq.py for better observability.
 
 Refactored `pop` method in `liteq.py` by extracting logic into `_fetch_next_row`, `_process_dlq`, `_accept_message`, and `_try_pop` helper methods.
+
+Added examples/single_producer_multi_consumer.py to demonstrate typical usage with multiprocessing.
+
+Added examples/single_producer_multi_consumer_threading.py to demonstrate usage with threading.
