@@ -45,7 +45,7 @@ class TestLiteQueue(unittest.TestCase):
         self.assertEqual(msg.data, data)
 
     def test_integer_timestamps(self):
-        self.q.put(b"data", delay=0)
+        self.q.put(b"data", visible_after_seconds=0)
         with sqlite3.connect(DB_FILE) as conn:
             row = conn.execute(SQL_SELECT_VISIBLE_AFTER).fetchone()
             self.assertIsInstance(row[0], int)
@@ -53,10 +53,8 @@ class TestLiteQueue(unittest.TestCase):
     def test_visibility_timeout(self):
         self.q.put(b"data")
         self.q.pop(invisible_seconds=1)  # invisible for 1 sec
-
         msg = self.q.pop()
         self.assertIsNone(msg)
-
         time.sleep(1.1)
         msg = self.q.pop()
         self.assertIsNotNone(msg)
@@ -64,10 +62,8 @@ class TestLiteQueue(unittest.TestCase):
     def test_queues_isolation(self):
         self.q.put(b"dataA", qname="A")
         self.q.put(b"dataB", qname="B")
-
         msgA = self.q.pop(qname="A")
         self.assertEqual(msgA.data, b"dataA")
-
         msgB = self.q.pop(qname="B")
         self.assertEqual(msgB.data, b"dataB")
 
@@ -75,24 +71,20 @@ class TestLiteQueue(unittest.TestCase):
         self.q.put(b"job")
         with self.q.consume() as msg:
             self.assertEqual(msg.data, b"job")
-
         # Should be deleted
         self.assertIsNone(self.q.pop())
 
     def test_process_failure_retry(self):
         self.q.put(b"job")
-
         try:
             with self.q.consume() as msg:
                 raise ValueError("fail")
         except ValueError:
             pass
-
         # Should still be there, but invisible until timeout?
         # pop updates visible_after to now + timeout.
         # So it won't be visible immediately.
         # Check DB directly for retry_count.
-
         with sqlite3.connect(DB_FILE) as conn:
             row = conn.execute(SQL_SELECT_RETRY_COUNT).fetchone()
             self.assertEqual(row[0], 1)
@@ -101,32 +93,25 @@ class TestLiteQueue(unittest.TestCase):
         # Set max_retries to 1
         self.q.max_retries = 1
         self.q.put(b"bad_job")
-
         # First failure
         try:
             with self.q.consume() as msg:
                 raise ValueError("fail 1")
         except ValueError:
             pass
-
         # Retry count should be 1.
-
         # Verify it is still in messages (though invisible)
         # To pop it again, we need to wait for timeout.
         # Or we can manually update visible_after in DB to 0 for testing.
-
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute(SQL_RESET_MESSAGES_VISIBILITY)
-
         # Second failure (retry_count becomes 2 > 1) -> DLQ
         # The pop() method will see that retry_count + 1 > max_retries,
         # so it will move it to DLQ immediately and return None.
         with self.q.consume() as msg:
             self.assertIsNone(msg)
-
         # Should be gone from messages
         self.assertIsNone(self.q.peek())
-
         # Should be in DLQ
         with sqlite3.connect(DB_FILE) as conn:
             row = conn.execute(SQL_SELECT_DLQ_DATA_REASON).fetchone()

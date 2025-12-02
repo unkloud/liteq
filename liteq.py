@@ -5,11 +5,10 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Generator, Optional
+import sys
+
 
 logger = logging.getLogger(__name__)
-
-# Ensure thread safety
-assert sqlite3.threadsafety in (1, 3), f"{sqlite3.threadsafety=}, expected 1 or 3"
 
 
 def uuid_v7() -> str:
@@ -40,7 +39,6 @@ SQL_SCHEMA = """
              ) STRICT;
              """
 
-
 SQL_PRAGMA_WAL = "PRAGMA journal_mode=WAL;"
 SQL_PRAGMA_SYNCHRONOUS = "PRAGMA synchronous=NORMAL;"
 
@@ -53,13 +51,13 @@ SQL_MESSAGES_INSERT = (
 )
 
 SQL_MESSAGES_SELECT_NEXT = """
-    SELECT id, data, queue_name, retry_count, created_at
-    FROM liteq_messages
-    WHERE queue_name = ?
-      AND visible_after <= ?
-    ORDER BY created_at ASC
-    LIMIT 1
-"""
+                           SELECT id, data, queue_name, retry_count, created_at
+                           FROM liteq_messages
+                           WHERE queue_name = ?
+                             AND visible_after <= ?
+                           ORDER BY created_at
+                           LIMIT 1 
+                           """
 
 SQL_MESSAGES_UPDATE_VISIBLE = (
     "UPDATE liteq_messages "
@@ -76,8 +74,11 @@ SQL_SELECT_VISIBLE_AFTER = "SELECT visible_after FROM liteq_messages"
 SQL_SELECT_RETRY_COUNT = "SELECT retry_count FROM liteq_messages"
 SQL_RESET_MESSAGES_VISIBILITY = "UPDATE liteq_messages SET visible_after = 0"
 SQL_SELECT_DLQ_DATA_REASON = "SELECT data, reason FROM liteq_dlq"
-SQL_COUNT_DLQ = "SELECT count(*) FROM liteq_dlq"
-SQL_COUNT_ALL_MESSAGES = "SELECT count(*) FROM liteq_messages"
+SQL_COUNT_DLQ = "SELECT COUNT(*) FROM liteq_dlq"
+SQL_COUNT_ALL_MESSAGES = "SELECT COUNT(*) FROM liteq_messages"
+conn_opts = dict(isolation_level=None, check_same_thread=True)
+if sys.version_info >= (3, 12):
+    conn_opts = dict(autocommit=True, check_same_thread=True)
 
 
 @dataclass
@@ -105,32 +106,38 @@ def _move_to_dlq(
 
 
 class LiteQueue:
-    def __init__(self, filename: str, max_retries: int = 5):
-        assert filename != ":memory:", f"in-memory database isn't supported, sorry"
+    def __init__(self, filename: str, max_retries: int = 5, timeout_seconds: int = 5):
+        assert filename != ":memory:", "in-memory database isn't supported, sorry"
         self.filename = filename
         self.max_retries = max_retries
+        self.timeout_seconds = timeout_seconds
         self._init_db()
         logger.debug(f"LiteQueue initialized: {self.filename}")
 
     def _get_conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.filename, timeout=10.0)
+        conn = sqlite3.connect(
+            self.filename,
+            timeout=self.timeout_seconds,
+            **conn_opts,
+        )
         conn.row_factory = sqlite3.Row
+        conn.execute(SQL_PRAGMA_SYNCHRONOUS)
+        conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DDL, False)
+        conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DML, False)
+        conn.setconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_FKEY, True)
         return conn
 
     def _init_db(self):
         with self._get_conn() as conn:
             conn.execute(SQL_PRAGMA_WAL)
-            conn.execute(SQL_PRAGMA_SYNCHRONOUS)
-            conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DDL, False)
-            conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DML, False)
-            conn.setconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_FKEY, True)
             conn.executescript(SQL_SCHEMA)
 
-    def put(self, data: bytes, qname: str = "default", delay: int = 0) -> str:
+    def put(
+        self, data: bytes, qname: str = "default", visible_after_seconds: int = 0
+    ) -> str:
         now = int(time.time())
-        visible_after = int(now + delay)
+        visible_after = int(now + visible_after_seconds)
         msg_id = uuid_v7()
-
         with self._get_conn() as conn:
             conn.execute(
                 SQL_MESSAGES_INSERT,
@@ -140,13 +147,14 @@ class LiteQueue:
         return msg_id
 
     def pop(
-        self, qname: str = "default", invisible_seconds: int = 60
+        self, qname: str = "default", invisible_seconds: int = 60, wait_seconds: int = 0
     ) -> Optional[Message]:
-        now = int(time.time())
+        end_time = time.time() + wait_seconds
         conn = self._get_conn()
         try:
             while True:
                 conn.execute(SQL_BEGIN_IMMEDIATE)
+                now = int(time.time())
                 cursor = conn.execute(
                     SQL_MESSAGES_SELECT_NEXT,
                     (qname, now),
@@ -154,9 +162,11 @@ class LiteQueue:
                 row = cursor.fetchone()
 
                 if not row:
-                    conn.rollback()
-                    return None
-
+                    conn.execute("ROLLBACK")
+                    if time.time() >= end_time:
+                        return None
+                    time.sleep(0.05)
+                    continue
                 if row["retry_count"] + 1 > self.max_retries:
                     logger.warning(
                         f"Message {row['id']} exceeded max retries ({self.max_retries}). Moving to DLQ."
@@ -168,7 +178,7 @@ class LiteQueue:
                         row["data"],
                         f"Max retries exceeded during pop ({self.max_retries})",
                     )
-                    conn.commit()
+                    conn.execute("COMMIT")
                     continue
 
                 msg = Message(
@@ -182,11 +192,14 @@ class LiteQueue:
                     SQL_MESSAGES_UPDATE_VISIBLE,
                     (int(now + invisible_seconds), msg.id),
                 )
-                conn.commit()
+                conn.execute("COMMIT")
                 logger.debug(f"Popped message {msg.id} from queue {msg.queue_name}")
                 return msg
         except Exception:
-            conn.rollback()
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                logger.debug("ROLLBACK failed, nothing can do, exiting")
             logger.exception("Error during pop")
             raise
         finally:
