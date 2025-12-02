@@ -6,12 +6,16 @@ import threading
 from liteq import (
     LiteQueue,
     Message,
-    SQL_SELECT_VISIBLE_AFTER,
-    SQL_SELECT_RETRY_COUNT,
-    SQL_RESET_MESSAGES_VISIBILITY,
-    SQL_SELECT_DLQ_DATA_REASON,
 )
 
+
+# Debug / Test Helpers
+SELECT_VISIBILITY_TS = "SELECT visible_after FROM liteq_messages"
+SELECT_RETRY_COUNT = "SELECT retry_count FROM liteq_messages"
+RESET_MESSAGES_VISIBILITY = "UPDATE liteq_messages SET visible_after = 0"
+SELECT_DLQ_DATA_REASON = "SELECT data, reason FROM liteq_dlq"
+COUNT_DLQ = "SELECT COUNT(*) FROM liteq_dlq"
+COUNT_MESSAGES = "SELECT COUNT(*) FROM liteq_messages"
 DB_FILE = "/tmp/test_queue.db"
 
 
@@ -47,7 +51,7 @@ class TestLiteQueue(unittest.TestCase):
     def test_integer_timestamps(self):
         self.q.put(b"data", visible_after_seconds=0)
         with sqlite3.connect(DB_FILE) as conn:
-            row = conn.execute(SQL_SELECT_VISIBLE_AFTER).fetchone()
+            row = conn.execute(SELECT_VISIBILITY_TS).fetchone()
             self.assertIsInstance(row[0], int)
 
     def test_visibility_timeout(self):
@@ -86,7 +90,7 @@ class TestLiteQueue(unittest.TestCase):
         # So it won't be visible immediately.
         # Check DB directly for retry_count.
         with sqlite3.connect(DB_FILE) as conn:
-            row = conn.execute(SQL_SELECT_RETRY_COUNT).fetchone()
+            row = conn.execute(SELECT_RETRY_COUNT).fetchone()
             self.assertEqual(row[0], 1)
 
     def test_dlq_logic(self):
@@ -104,7 +108,7 @@ class TestLiteQueue(unittest.TestCase):
         # To pop it again, we need to wait for timeout.
         # Or we can manually update visible_after in DB to 0 for testing.
         with sqlite3.connect(DB_FILE) as conn:
-            conn.execute(SQL_RESET_MESSAGES_VISIBILITY)
+            conn.execute(RESET_MESSAGES_VISIBILITY)
         # Second failure (retry_count becomes 2 > 1) -> DLQ
         # The pop() method will see that retry_count + 1 > max_retries,
         # so it will move it to DLQ immediately and return None.
@@ -114,7 +118,7 @@ class TestLiteQueue(unittest.TestCase):
         self.assertIsNone(self.q.peek())
         # Should be in DLQ
         with sqlite3.connect(DB_FILE) as conn:
-            row = conn.execute(SQL_SELECT_DLQ_DATA_REASON).fetchone()
+            row = conn.execute(SELECT_DLQ_DATA_REASON).fetchone()
             self.assertEqual(row[0], b"bad_job")
             self.assertIn("Max retries exceeded", row[1])
 

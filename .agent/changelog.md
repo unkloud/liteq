@@ -3,3 +3,5 @@ Added robustness test suite implementing Chaos Engineering scenarios (Meat Grind
 Added test cases for qsize, empty, and join methods in liteq_test.py.
 Refactored logging configuration to avoid interference with application logging settings and fixed table references in robustness tests.
 Added logging messages to critical paths and exception handling in liteq.py for better observability.
+
+Refactored `pop` method in `liteq.py` by extracting logic into `_fetch_next_row`, `_process_dlq`, `_accept_message`, and `_try_pop` helper methods.

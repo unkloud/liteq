@@ -50,7 +50,7 @@ SQL_MESSAGES_INSERT = (
     "VALUES (?, ?, ?, ?, ?, ?)"
 )
 
-SQL_MESSAGES_SELECT_NEXT = """
+SELECT_NEXT_VISIBLE = """
                            SELECT id, data, queue_name, retry_count, created_at
                            FROM liteq_messages
                            WHERE queue_name = ?
@@ -59,23 +59,17 @@ SQL_MESSAGES_SELECT_NEXT = """
                            LIMIT 1 
                            """
 
-SQL_MESSAGES_UPDATE_VISIBLE = (
+UPDATE_MSG_VISIBILITY_RETRY = (
     "UPDATE liteq_messages "
     "SET visible_after = ?, retry_count = retry_count + 1 "
     "WHERE id = ?"
 )
 
-SQL_MESSAGES_UPDATE_RETRY = "UPDATE liteq_messages SET retry_count = ? WHERE id = ?"
-SQL_MESSAGES_COUNT = "SELECT COUNT(*) FROM liteq_messages WHERE queue_name = ?"
-SQL_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
+UPDATE_RETRY = "UPDATE liteq_messages SET retry_count = ? WHERE id = ?"
+QUEUE_SIZE = "SELECT COUNT(*) FROM liteq_messages WHERE queue_name = ?"
+BEGIN_WRITE_TRANSACTION = "BEGIN IMMEDIATE"
 
-# Debug / Test Helpers
-SQL_SELECT_VISIBLE_AFTER = "SELECT visible_after FROM liteq_messages"
-SQL_SELECT_RETRY_COUNT = "SELECT retry_count FROM liteq_messages"
-SQL_RESET_MESSAGES_VISIBILITY = "UPDATE liteq_messages SET visible_after = 0"
-SQL_SELECT_DLQ_DATA_REASON = "SELECT data, reason FROM liteq_dlq"
-SQL_COUNT_DLQ = "SELECT COUNT(*) FROM liteq_dlq"
-SQL_COUNT_ALL_MESSAGES = "SELECT COUNT(*) FROM liteq_messages"
+
 conn_opts = dict(isolation_level=None, check_same_thread=True)
 if sys.version_info >= (3, 12):
     conn_opts = dict(autocommit=True, check_same_thread=True)
@@ -146,6 +140,76 @@ class LiteQueue:
         logger.debug(f"Put message {msg_id} to queue {qname}")
         return msg_id
 
+    def _fetch_next_row(self, conn: sqlite3.Connection, qname: str, now: int):  # noqa
+        cursor = conn.execute(
+            SELECT_NEXT_VISIBLE,
+            (qname, now),
+        )
+        return cursor.fetchone()
+
+    def _process_dlq(self, conn: sqlite3.Connection, row: sqlite3.Row):
+        logger.warning(
+            f"Message {row['id']} exceeded max retries ({self.max_retries}). Moving to DLQ."
+        )
+        _move_to_dlq(
+            conn,
+            row["id"],
+            row["queue_name"],
+            row["data"],
+            f"Max retries exceeded during pop ({self.max_retries})",
+        )
+
+    def _accept_message(  # noqa
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+        now: int,
+        invisible_seconds: int,
+    ) -> Message:
+        msg = Message(
+            id=row["id"],
+            data=row["data"],
+            queue_name=row["queue_name"],
+            retry_count=row["retry_count"],
+            created_at=row["created_at"],
+        )
+        conn.execute(
+            UPDATE_MSG_VISIBILITY_RETRY,
+            (int(now + invisible_seconds), msg.id),
+        )
+        logger.debug(f"Popped message {msg.id} from queue {msg.queue_name}")
+        return msg
+
+    def _try_pop(
+        self, conn: sqlite3.Connection, qname: str, invisible_seconds: int
+    ) -> tuple[Optional[Message], bool]:
+        """
+        Attempts to pop a message.
+        Returns (Message, False) if successful.
+        Returns (None, True) if DLQ was processed (should retry immediately).
+        Returns (None, False) if queue empty.
+        """
+        try:
+            conn.execute(BEGIN_WRITE_TRANSACTION)
+        except sqlite3.OperationalError:
+            logger.debug(f"Possibly locked by other thread: {qname}, retrying")
+            return None, False
+        now = int(time.time())
+        row = self._fetch_next_row(conn, qname, now)
+
+        if not row:
+            conn.execute("ROLLBACK")
+            return None, False
+
+        if row["retry_count"] + 1 > self.max_retries:
+            self._process_dlq(conn, row)
+            conn.execute("COMMIT")
+            return None, True
+
+        msg = self._accept_message(conn, row, now, invisible_seconds)
+        conn.execute("COMMIT")
+        return msg, False
+
     def pop(
         self, qname: str = "default", invisible_seconds: int = 60, wait_seconds: int = 0
     ) -> Optional[Message]:
@@ -153,48 +217,14 @@ class LiteQueue:
         conn = self._get_conn()
         try:
             while True:
-                conn.execute(SQL_BEGIN_IMMEDIATE)
-                now = int(time.time())
-                cursor = conn.execute(
-                    SQL_MESSAGES_SELECT_NEXT,
-                    (qname, now),
-                )
-                row = cursor.fetchone()
-
-                if not row:
-                    conn.execute("ROLLBACK")
-                    if time.time() >= end_time:
-                        return None
-                    time.sleep(0.05)
+                msg, should_retry = self._try_pop(conn, qname, invisible_seconds)
+                if msg:
+                    return msg
+                if should_retry:
                     continue
-                if row["retry_count"] + 1 > self.max_retries:
-                    logger.warning(
-                        f"Message {row['id']} exceeded max retries ({self.max_retries}). Moving to DLQ."
-                    )
-                    _move_to_dlq(
-                        conn,
-                        row["id"],
-                        row["queue_name"],
-                        row["data"],
-                        f"Max retries exceeded during pop ({self.max_retries})",
-                    )
-                    conn.execute("COMMIT")
-                    continue
-
-                msg = Message(
-                    id=row["id"],
-                    data=row["data"],
-                    queue_name=row["queue_name"],
-                    retry_count=row["retry_count"],
-                    created_at=row["created_at"],
-                )
-                conn.execute(
-                    SQL_MESSAGES_UPDATE_VISIBLE,
-                    (int(now + invisible_seconds), msg.id),
-                )
-                conn.execute("COMMIT")
-                logger.debug(f"Popped message {msg.id} from queue {msg.queue_name}")
-                return msg
+                if time.time() >= end_time:
+                    return None
+                time.sleep(0.05)
         except Exception:
             try:
                 conn.execute("ROLLBACK")
@@ -209,7 +239,7 @@ class LiteQueue:
         now = int(time.time())
         with self._get_conn() as conn:
             cursor = conn.execute(
-                SQL_MESSAGES_SELECT_NEXT,
+                SELECT_NEXT_VISIBLE,
                 (qname, now),
             )
             row = cursor.fetchone()
@@ -225,7 +255,7 @@ class LiteQueue:
 
     def qsize(self, qname: str) -> int:
         with self._get_conn() as conn:
-            cursor = conn.execute(SQL_MESSAGES_COUNT, (qname,))
+            cursor = conn.execute(QUEUE_SIZE, (qname,))
             return cursor.fetchone()[0]
 
     def empty(self, qname: str = "default") -> bool:
@@ -272,6 +302,6 @@ class LiteQueue:
                 # Update retry_count.
                 # Note: 'visible_after' is already set to now + timeout from pop().
                 conn.execute(
-                    SQL_MESSAGES_UPDATE_RETRY,
+                    UPDATE_RETRY,
                     (new_retry_count, msg.id),
                 )
