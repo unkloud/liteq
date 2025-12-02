@@ -1,12 +1,11 @@
 import logging
 import sqlite3
+import sys
 import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Generator, Optional
-import sys
-
 
 logger = logging.getLogger(__name__)
 
