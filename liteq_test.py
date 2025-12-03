@@ -165,6 +165,38 @@ class TestLiteQueue(unittest.TestCase):
         self.assertTrue(self.q.empty())
         self.assertGreater(end_time - start_time, 0.3)
 
+    def test_redrive(self):
+        # 1. Move message to DLQ
+        # Set max_retries to 0 so immediate pop sends it to DLQ
+        self.q.max_retries = 0
+        self.q.put(b"dead_message")
+
+        # This pop triggers the move to DLQ because (current_retry=0 + 1) > max_retries=0
+        msg = self.q.pop()
+        self.assertIsNone(msg)
+
+        # Check DLQ has 1 item
+        with sqlite3.connect(DB_FILE) as conn:
+            count = conn.execute(COUNT_DLQ).fetchone()[0]
+        self.assertEqual(count, 1)
+
+        # 2. Redrive
+        self.q.redrive()
+
+        # 3. Check DLQ is empty
+        with sqlite3.connect(DB_FILE) as conn:
+            count = conn.execute(COUNT_DLQ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+        # 4. Check message is back and retry_count is reset
+        # We need to increase max_retries to pop it successfully without sending it back to DLQ immediately
+        self.q.max_retries = 5
+        msg = self.q.pop()
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg.data, b"dead_message")
+        # The popped message object has the retry_count as it was when fetched (0)
+        self.assertEqual(msg.retry_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

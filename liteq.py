@@ -128,7 +128,17 @@ UPDATE_MSG_VISIBILITY_RETRY = (
 UPDATE_RETRY = "UPDATE liteq_messages SET retry_count = ? WHERE id = ?"
 QUEUE_SIZE = "SELECT COUNT(*) FROM liteq_messages WHERE queue_name = ?"
 BEGIN_WRITE_TRANSACTION = "BEGIN IMMEDIATE"
-
+DLQ_REDRIVE_INSERT = """INSERT INTO liteq_messages (id, queue_name, data, visible_after, retry_count, created_at)
+SELECT 
+    id, 
+    queue_name,
+    data, 
+    ?,             -- Set visible immediately
+    0,             -- Reset retry count
+    ?              -- Treat as new message (original created_at is lost in DLQ)
+FROM liteq_dlq
+WHERE queue_name = ?"""
+DLQ_DELETE = """DELETE FROM liteq_dlq WHERE queue_name = ?"""
 
 conn_opts = dict(isolation_level=None, check_same_thread=True)
 if sys.version_info >= (3, 12):
@@ -341,6 +351,18 @@ class LiteQueue:
     def join(self, qname: str = "default"):
         while not self.empty(qname):
             time.sleep(0.1)
+
+    def redrive(self, qname: str = "default"):
+        now = int(time.time())
+        with closing(self._connect()) as conn:
+            conn.execute(BEGIN_WRITE_TRANSACTION)
+            try:
+                conn.execute(DLQ_REDRIVE_INSERT, (now, now, qname))
+                conn.execute(DLQ_DELETE, (qname,))
+                conn.execute("COMMIT")
+            except:
+                conn.execute("ROLLBACK")
+                raise
 
     @contextmanager
     def consume(
