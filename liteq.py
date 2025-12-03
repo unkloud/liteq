@@ -187,18 +187,33 @@ class LiteQueue:
             conn.executescript(SQL_SCHEMA)
 
     def put(
-        self, data: bytes, qname: str = "default", visible_after_seconds: int = 0
+        self,
+        data: bytes,
+        qname: str = "default",
+        visible_after_seconds: int = 0,
+        retries_on_conflict: int = 5,
+        pause_on_conflict: float = 0.05,
     ) -> str:
-        now = int(time.time())
-        visible_after = int(now + visible_after_seconds)
-        msg_id = str(uuid_v7())
         with closing(self._connect()) as conn:
-            conn.execute(
-                SQL_MESSAGES_INSERT,
-                (msg_id, qname, data, visible_after, 0, now),
-            )
-        logger.debug(f"Put message {msg_id} to queue {qname}")
-        return msg_id
+            for retry in range(retries_on_conflict):
+                try:
+                    now = int(time.time())
+                    visible_after = int(now + visible_after_seconds)
+                    msg_id = str(uuid_v7())
+                    conn.execute(
+                        SQL_MESSAGES_INSERT,
+                        (msg_id, qname, data, visible_after, 0, now),
+                    )
+                    logger.debug(f"Put message {msg_id} to queue {qname}")
+                    return msg_id
+                except sqlite3.IntegrityError:
+                    logger.warning(f"Put message {msg_id} already in queue, retrying")
+                    time.sleep(pause_on_conflict)
+            else:
+                logger.error(f"Failed to put message {msg_id} to queue {qname}")
+                raise sqlite3.IntegrityError(
+                    f"Failed to put message {msg_id} to queue {qname} after {retries_on_conflict} retries"
+                )
 
     def _fetch_next_row(self, conn: sqlite3.Connection, qname: str, now: int):  # noqa
         cursor = conn.execute(
@@ -353,17 +368,23 @@ class LiteQueue:
     def process_failed(self, msg: Message, reason: str):
         new_retry_count = msg.retry_count + 1
         logger.warning(f"process_failed: {msg.id=}: {reason=}")
-
         with closing(self._connect()) as conn:
-            if new_retry_count > self.max_retries:
-                # Move to DLQ
-                _move_to_dlq(conn, msg.id, msg.queue_name, msg.data, reason)
-                conn.commit()
-                logger.warning(f"Message {msg.id} moved to DLQ from reject: {reason}")
-            else:
-                # Update retry_count.
-                # Note: 'visible_after' is already set to now + timeout from pop().
-                conn.execute(
-                    UPDATE_RETRY,
-                    (new_retry_count, msg.id),
-                )
+            try:
+                conn.execute(BEGIN_WRITE_TRANSACTION)
+                if new_retry_count > self.max_retries:
+                    # Move to DLQ
+                    _move_to_dlq(conn, msg.id, msg.queue_name, msg.data, reason)
+                    logger.warning(
+                        f"Message {msg.id} moved to DLQ from reject: {reason}"
+                    )
+                else:
+                    # Update retry_count.
+                    # Note: 'visible_after' is already set to now + timeout from pop().
+                    conn.execute(
+                        UPDATE_RETRY,
+                        (new_retry_count, msg.id),
+                    )
+                conn.execute("COMMIT")
+            except:
+                conn.execute("ROLLBACK")
+                raise
