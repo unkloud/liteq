@@ -1,4 +1,5 @@
 import logging
+import os
 import sqlite3
 import sys
 import time
@@ -9,15 +10,80 @@ from typing import Generator, Optional
 
 logger = logging.getLogger(__name__)
 
+# DO NOT UPDATE UNLESS YOU KNOW WHAT YOU ARE DOING
+# Start of uuid v7 back port
+# This is a copy of UUID V7 implementation from Python 3.14's standard library
+_last_timestamp_v7 = None
+_last_counter_v7 = 0  # 42-bit counter
+_RFC_4122_VERSION_7_FLAGS = (7 << 76) | (0x8000 << 48)
 
-def uuid_v7() -> str:
-    return str(uuid.uuid7())  # noqa
+
+def _uuid7_get_counter_and_tail():
+    rand = int.from_bytes(os.urandom(10))
+    # 42-bit counter with MSB set to 0
+    counter = (rand >> 32) & 0x1FF_FFFF_FFFF
+    # 32-bit random data
+    tail = rand & 0xFFFF_FFFF
+    return counter, tail
+
+
+def uuid7_backport():
+    global _last_timestamp_v7
+    global _last_counter_v7
+
+    nanoseconds = time.time_ns()
+    timestamp_ms = nanoseconds // 1_000_000
+
+    if _last_timestamp_v7 is None or timestamp_ms > _last_timestamp_v7:
+        counter, tail = _uuid7_get_counter_and_tail()
+    else:
+        if timestamp_ms < _last_timestamp_v7:
+            timestamp_ms = _last_timestamp_v7 + 1
+        # advance the 42-bit counter
+        counter = _last_counter_v7 + 1
+        if counter > 0x3FF_FFFF_FFFF:
+            # advance the 48-bit timestamp
+            timestamp_ms += 1
+            counter, tail = _uuid7_get_counter_and_tail()
+        else:
+            # 32-bit random data
+            tail = int.from_bytes(os.urandom(4))
+
+    unix_ts_ms = timestamp_ms & 0xFFFF_FFFF_FFFF
+    counter_msbs = counter >> 30
+    # keep 12 counter's MSBs and clear variant bits
+    counter_hi = counter_msbs & 0x0FFF
+    # keep 30 counter's LSBs and clear version bits
+    counter_lo = counter & 0x3FFF_FFFF
+    # ensure that the tail is always a 32-bit integer (by construction,
+    # it is already the case, but future interfaces may allow the user
+    # to specify the random tail)
+    tail &= 0xFFFF_FFFF
+
+    int_uuid_7 = unix_ts_ms << 80
+    int_uuid_7 |= counter_hi << 64
+    int_uuid_7 |= counter_lo << 32
+    int_uuid_7 |= tail
+    # by construction, the variant and version bits are already cleared
+    int_uuid_7 |= _RFC_4122_VERSION_7_FLAGS
+    res = uuid.UUID._from_int(int_uuid_7)
+
+    # defer global update until all computations are done
+    _last_timestamp_v7 = timestamp_ms
+    _last_counter_v7 = counter
+    return res
+
+
+# End of uuid v7 back port
+uuid_v7 = uuid7_backport
+if sys.version_info >= (3, 14):
+    uuid_v7 = uuid.uuid7
 
 
 SQL_SCHEMA = """
              CREATE TABLE IF NOT EXISTS liteq_messages
              (
-                 id            TEXT PRIMARY KEY, -- UUIDv7
+                 id            TEXT PRIMARY KEY, -- UUID v7
                  queue_name    TEXT NOT NULL DEFAULT 'default',
                  data          BLOB NOT NULL,    -- Binary Payload
                  visible_after INTEGER,          -- UTC Timestamp (Seconds)
@@ -30,17 +96,15 @@ SQL_SCHEMA = """
 
              CREATE TABLE IF NOT EXISTS liteq_dlq
              (
-                 id         TEXT PRIMARY KEY,
+                 id         TEXT PRIMARY KEY, -- UUID v7
                  queue_name TEXT,
                  data       BLOB,
                  failed_at  INTEGER, -- UTC Timestamp (Seconds)
                  reason     TEXT
              ) STRICT;
              """
-
 SQL_PRAGMA_WAL = "PRAGMA journal_mode=WAL;"
 SQL_PRAGMA_SYNCHRONOUS = "PRAGMA synchronous=NORMAL;"
-
 SQL_DLQ_INSERT = "INSERT INTO liteq_dlq (id, queue_name, data, failed_at, reason) VALUES (?, ?, ?, ?, ?)"
 SQL_MESSAGES_DELETE = "DELETE FROM liteq_messages WHERE id = ?"
 SQL_MESSAGES_INSERT = (
@@ -48,7 +112,6 @@ SQL_MESSAGES_INSERT = (
     "(id, queue_name, data, visible_after, retry_count, created_at) "
     "VALUES (?, ?, ?, ?, ?, ?)"
 )
-
 SELECT_NEXT_VISIBLE = """
                            SELECT id, data, queue_name, retry_count, created_at
                            FROM liteq_messages
@@ -57,13 +120,11 @@ SELECT_NEXT_VISIBLE = """
                            ORDER BY created_at
                            LIMIT 1 
                            """
-
 UPDATE_MSG_VISIBILITY_RETRY = (
     "UPDATE liteq_messages "
     "SET visible_after = ?, retry_count = retry_count + 1 "
     "WHERE id = ?"
 )
-
 UPDATE_RETRY = "UPDATE liteq_messages SET retry_count = ? WHERE id = ?"
 QUEUE_SIZE = "SELECT COUNT(*) FROM liteq_messages WHERE queue_name = ?"
 BEGIN_WRITE_TRANSACTION = "BEGIN IMMEDIATE"
@@ -130,7 +191,7 @@ class LiteQueue:
     ) -> str:
         now = int(time.time())
         visible_after = int(now + visible_after_seconds)
-        msg_id = uuid_v7()
+        msg_id = str(uuid_v7())
         with self._get_conn() as conn:
             conn.execute(
                 SQL_MESSAGES_INSERT,
@@ -145,18 +206,6 @@ class LiteQueue:
             (qname, now),
         )
         return cursor.fetchone()
-
-    def _process_dlq(self, conn: sqlite3.Connection, row: sqlite3.Row):
-        logger.warning(
-            f"Message {row['id']} exceeded max retries ({self.max_retries}). Moving to DLQ."
-        )
-        _move_to_dlq(
-            conn,
-            row["id"],
-            row["queue_name"],
-            row["data"],
-            f"Max retries exceeded during pop ({self.max_retries})",
-        )
 
     def _accept_message(  # noqa
         self,
@@ -201,7 +250,16 @@ class LiteQueue:
             return None, False
 
         if row["retry_count"] + 1 > self.max_retries:
-            self._process_dlq(conn, row)
+            logger.warning(
+                f"Message {row['id']} exceeded max retries ({self.max_retries}). Moving to DLQ."
+            )
+            _move_to_dlq(
+                conn,
+                row["id"],
+                row["queue_name"],
+                row["data"],
+                f"Max retries exceeded during pop ({self.max_retries})",
+            )
             conn.execute("COMMIT")
             return None, True
 
@@ -210,7 +268,11 @@ class LiteQueue:
         return msg, False
 
     def pop(
-        self, qname: str = "default", invisible_seconds: int = 60, wait_seconds: int = 0
+        self,
+        qname: str = "default",
+        invisible_seconds: int = 60,
+        wait_seconds: int = 0,
+        pause_on_empty_fetch: float = 0.05,
     ) -> Optional[Message]:
         end_time = time.time() + wait_seconds
         conn = self._get_conn()
@@ -223,12 +285,13 @@ class LiteQueue:
                     continue
                 if time.time() >= end_time:
                     return None
-                time.sleep(0.05)
-        except Exception:
+                time.sleep(pause_on_empty_fetch)
+        except sqlite3.Error:
+            logger.exception("Error while popping message")
             try:
                 conn.execute("ROLLBACK")
-            except Exception:
-                logger.debug("ROLLBACK failed, nothing can do, exiting")
+            except sqlite3.Error:
+                logger.exception("ROLLBACK failed, nothing can do, exiting")
             logger.exception("Error during pop")
             raise
         finally:

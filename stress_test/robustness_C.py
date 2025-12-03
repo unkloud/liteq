@@ -89,4 +89,9 @@ def run_zombie_test():
 
 
 if __name__ == "__main__":
-    run_zombie_test()
+    try:
+        run_zombie_test()
+    finally:
+        os.remove(DB_PATH)
+        os.remove(DB_PATH + "-wal")
+        os.remove(DB_PATH + "-shm")

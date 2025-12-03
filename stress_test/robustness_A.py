@@ -162,4 +162,9 @@ def run_chaos_test():
 
 
 if __name__ == "__main__":
-    run_chaos_test()
+    try:
+        run_chaos_test()
+    finally:
+        os.remove(DB_PATH)
+        os.remove(DB_PATH + "-wal")
+        os.remove(DB_PATH + "-shm")

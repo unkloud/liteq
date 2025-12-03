@@ -67,7 +67,7 @@ def run_demo():
     consumers = []
     for i in range(NUM_CONSUMERS):
         p = multiprocessing.Process(
-            target=consumer, args=(DB_FILE, i + 1), name=f"Consumer-{i+1}"
+            target=consumer, args=(DB_FILE, i + 1), name=f"Consumer-{i + 1}"
         )
         p.start()
         consumers.append(p)

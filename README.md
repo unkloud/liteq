@@ -10,8 +10,6 @@ by [AWS SQS](https://aws.amazon.com/sqs/) and [Huey](https://github.com/coleifer
 
 ## TODO
 
-[x] long polling in the `pop` function
-
-[] Backport uuidv7 for python<3.14
-
-[] More robust put method to handle uuidv7 conflict, however very low probability
+* [x] long polling in the `pop` function
+* [x] Backport uuidv7 for python<3.14
+* [] More robust put method to handle uuid v7 conflict, however very low probability
