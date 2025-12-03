@@ -128,5 +128,7 @@ if __name__ == "__main__":
         run_poison_pill_test()
     finally:
         os.remove(DB_PATH)
-        os.remove(DB_PATH + "-wal")
-        os.remove(DB_PATH + "-shm")
+        if os.path.exists(DB_PATH + "-wal"):
+            os.remove(DB_PATH + "-wal")
+        if os.path.exists(DB_PATH + "-shm"):
+            os.remove(DB_PATH + "-shm")

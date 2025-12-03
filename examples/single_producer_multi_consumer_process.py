@@ -87,8 +87,10 @@ def run_demo():
 
     if os.path.exists(DB_FILE):
         os.remove(DB_FILE)
-        os.remove(DB_FILE + "-wal")
-        os.remove(DB_FILE + "-shm")
+        if os.path.exists(DB_FILE + "-wal"):
+            os.remove(DB_FILE + "-wal")
+        if os.path.exists(DB_FILE + "-shm"):
+            os.remove(DB_FILE + "-shm")
 
 
 if __name__ == "__main__":

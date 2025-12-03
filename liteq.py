@@ -4,7 +4,7 @@ import sqlite3
 import sys
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from dataclasses import dataclass
 from typing import Generator, Optional
 
@@ -168,7 +168,7 @@ class LiteQueue:
         self._init_db()
         logger.debug(f"LiteQueue initialized: {self.filename}")
 
-    def _get_conn(self) -> sqlite3.Connection:
+    def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(
             self.filename,
             timeout=self.timeout_seconds,
@@ -182,7 +182,7 @@ class LiteQueue:
         return conn
 
     def _init_db(self):
-        with self._get_conn() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(SQL_PRAGMA_WAL)
             conn.executescript(SQL_SCHEMA)
 
@@ -192,7 +192,7 @@ class LiteQueue:
         now = int(time.time())
         visible_after = int(now + visible_after_seconds)
         msg_id = str(uuid_v7())
-        with self._get_conn() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 SQL_MESSAGES_INSERT,
                 (msg_id, qname, data, visible_after, 0, now),
@@ -275,7 +275,7 @@ class LiteQueue:
         pause_on_empty_fetch: float = 0.05,
     ) -> Optional[Message]:
         end_time = time.time() + wait_seconds
-        conn = self._get_conn()
+        conn = self._connect()
         try:
             while True:
                 msg, should_retry = self._try_pop(conn, qname, invisible_seconds)
@@ -299,7 +299,7 @@ class LiteQueue:
 
     def peek(self, qname: str = "default") -> Optional[Message]:
         now = int(time.time())
-        with self._get_conn() as conn:
+        with closing(self._connect()) as conn:
             cursor = conn.execute(
                 SELECT_NEXT_VISIBLE,
                 (qname, now),
@@ -316,7 +316,7 @@ class LiteQueue:
         return None
 
     def qsize(self, qname: str) -> int:
-        with self._get_conn() as conn:
+        with closing(self._connect()) as conn:
             cursor = conn.execute(QUEUE_SIZE, (qname,))
             return cursor.fetchone()[0]
 
@@ -346,7 +346,7 @@ class LiteQueue:
             raise
 
     def delete(self, msg_id: str):
-        with self._get_conn() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(SQL_MESSAGES_DELETE, (msg_id,))
         logger.debug(f"Ack message {msg_id}")
 
@@ -354,7 +354,7 @@ class LiteQueue:
         new_retry_count = msg.retry_count + 1
         logger.warning(f"process_failed: {msg.id=}: {reason=}")
 
-        with self._get_conn() as conn:
+        with closing(self._connect()) as conn:
             if new_retry_count > self.max_retries:
                 # Move to DLQ
                 _move_to_dlq(conn, msg.id, msg.queue_name, msg.data, reason)
