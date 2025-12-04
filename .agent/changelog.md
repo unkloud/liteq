@@ -16,3 +16,4 @@ Completed the User Guide section in README.md with introduction, concurrency det
 Filled in "What's it for" section in README.md highlighting key benefits like zero infrastructure, persistence, and safety.
 
 Refactored README.md to improve structure, add installation instructions, and list examples for better self-guidance.
+- Refined the Disclaimer section in README.md to be more professional and polite while maintaining clarity.

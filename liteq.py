@@ -1,3 +1,10 @@
+# This file includes code from the Python Standard Library.
+# Original Copyright (c) 2001-2024 Python Software Foundation.
+# All rights reserved.
+#
+# See LICENSE.python for the full license text.
+
+
 import logging
 import os
 import sqlite3

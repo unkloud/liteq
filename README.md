@@ -5,9 +5,14 @@ Inspired by [AWS SQS](https://aws.amazon.com/sqs/) and [Huey](https://github.com
 
 ## Disclaimer
 
-* **Early Stage**: This project is in the very early stages.
-* **AI Generated**: AI agents were used for coding and research.
-* **Do not use in production** (yet).
+* **AI Transparency**: This project was developed with the assistance of AI agents for coding and research. Please note
+  that every line of code has been carefully reviewed, tested, and validated by the author's best effort.
+* **Use with Caution**: While this library is built on the robust foundations of Python and SQLite and is used in the
+  author's production projects, it is provided "as is." Users are encouraged to test it thoroughly for their specific
+  requirements.
+* **Project Scope**: Liteq is intentionally designed to be simple and minimal. I don't see myself doing heavy
+  development except for maintenance and bug fixes, and the APIs will remain stable. Please don't expect it to go beyond
+  Python standard library and `sqlite3` package
 
 ## Key Features
 
