@@ -9,3 +9,5 @@ Refactored `pop` method in `liteq.py` by extracting logic into `_fetch_next_row`
 Added examples/single_producer_multi_consumer.py to demonstrate typical usage with multiprocessing.
 
 Added examples/single_producer_multi_consumer_threading.py to demonstrate usage with threading.
+Added examples/hacker_news_crawler.py, a multi-threaded crawler using LiteQueue and curl for robust data fetching.
+Added logging to critical paths in examples/hacker_news_crawler.py and fixed a potential AttributeError when upserting missing user data.
