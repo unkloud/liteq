@@ -8,6 +8,7 @@ import time
 from contextlib import closing
 from dataclasses import dataclass
 from typing import Optional, Self
+from threading import Thread
 
 import httpx
 
@@ -154,10 +155,22 @@ def crawl_items(db_path: str, queue: LiteQueue):
                 if user := item.hn_user:
                     user.upsert(db_path)
                 logger.info(f"Successfully processed item: {item_id}")
-                time.sleep(random.uniform(1, 2))
+                time.sleep(random.uniform(1.7, 3.1))
             else:
                 logger.info("Queue empty, exiting loop.")
                 break
+
+
+def start_crawler_pool(db_path: str, queue: LiteQueue, pool_size=4):
+    worker = []
+    for i in range(pool_size):
+        t = Thread(
+            target=crawl_items, args=(db_path, queue), name=f"Threaded-Crawler-{i + 1}"
+        )
+        t.start()
+        worker.append(t)
+    for i in worker:
+        i.join()
 
 
 if __name__ == "__main__":
@@ -165,4 +178,4 @@ if __name__ == "__main__":
     init_db(db_path)
     task_queue = LiteQueue(db_path)
     produce_new_batch(task_queue)
-    crawl_items(db_path, task_queue)
+    start_crawler_pool(db_path, task_queue)
