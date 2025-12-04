@@ -11,3 +11,8 @@ Added examples/single_producer_multi_consumer.py to demonstrate typical usage wi
 Added examples/single_producer_multi_consumer_threading.py to demonstrate usage with threading.
 Added examples/hacker_news_crawler.py, a multi-threaded crawler using LiteQueue and curl for robust data fetching.
 Added logging to critical paths in examples/hacker_news_crawler.py and fixed a potential AttributeError when upserting missing user data.
+
+Completed the User Guide section in README.md with introduction, concurrency details, minimum example, and interface reference.
+Filled in "What's it for" section in README.md highlighting key benefits like zero infrastructure, persistence, and safety.
+
+Refactored README.md to improve structure, add installation instructions, and list examples for better self-guidance.
