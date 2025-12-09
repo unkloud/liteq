@@ -63,6 +63,13 @@ class HNItem:
             return HNUser(id=user, profile=None)
         return None
 
+    @property
+    def children_ids(self) -> Optional[list[str]]:
+        if self.content:
+            json_content = json.loads(self.content)
+            return json_content.get("kids", [])
+        return None
+
     def upsert(self, db_path: str):
         sql = "INSERT INTO hnitem (id, content) VALUES (?, ?) ON CONFLICT DO NOTHING"
         with closing(connect(db_path)) as conn:
@@ -146,19 +153,27 @@ def produce_new_batch(
 
 def crawl_items(db_path: str, queue: LiteQueue):
     while True:
-        with queue.consume() as msg:
-            if msg:
-                item_id = msg.data.decode()
-                logger.info(f"Processing item: {item_id}")
-                item = HNItem.fetch(item_id)
-                item.upsert(db_path)
-                if user := item.hn_user:
-                    user.upsert(db_path)
-                logger.info(f"Successfully processed item: {item_id}")
-                time.sleep(random.uniform(1.7, 3.1))
-            else:
-                logger.info("Queue empty, exiting loop.")
-                break
+        try:
+            with queue.consume() as msg:
+                if msg:
+                    item_id = msg.data.decode()
+                    logger.info(f"Processing item: {item_id}")
+                    item = HNItem.fetch(item_id)
+                    item.upsert(db_path)
+                    if user := item.hn_user:
+                        user.upsert(db_path)
+                    if item.children_ids:
+                        logger.info(f"Processing children: {item.children_ids}")
+                        for child_id in item.children_ids:
+                            queue.put(str(child_id).encode("utf-8"))
+                    logger.info(f"Successfully processed item: {item_id}")
+                    time.sleep(random.uniform(1.7, 3.1))
+                else:
+                    logger.info("Queue empty, exiting loop.")
+                    break
+        except:
+            logger.exception(f"Recorvering from error crawling item: {item_id}")
+            continue
 
 
 def start_crawler_pool(db_path: str, queue: LiteQueue, pool_size=4):
