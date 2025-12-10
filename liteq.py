@@ -373,9 +373,12 @@ class LiteQueue:
 
     @contextmanager
     def consume(
-        self, qname: str = "default", invisible_on_receive: int = 60
+        self,
+        qname: str = "default",
+        invisible_on_receive: int = 60,
+        wait_seconds: int = 20,
     ) -> Generator[Optional[Message], None, None]:
-        msg = self.pop(qname, invisible_on_receive)
+        msg = self.pop(qname, invisible_on_receive, wait_seconds)
         if not msg:
             yield None
             return
