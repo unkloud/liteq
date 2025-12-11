@@ -24,6 +24,12 @@ _last_timestamp_v7 = None
 _last_counter_v7 = 0  # 42-bit counter
 _RFC_4122_VERSION_7_FLAGS = (7 << 76) | (0x8000 << 48)
 
+assert sqlite3.sqlite_version_info > (
+    3,
+    37,
+    0,
+), f"sqlite3 version {sqlite3.sqlite_version} is too old, please upgrade to 3.37.0 or newer"
+
 
 def _uuid7_get_counter_and_tail():
     rand = int.from_bytes(os.urandom(10))
@@ -146,6 +152,7 @@ SELECT
 FROM liteq_dlq
 WHERE queue_name = ?"""
 DLQ_DELETE = """DELETE FROM liteq_dlq WHERE queue_name = ?"""
+CLEAR_QUEUE_MESSAGES = """DELETE FROM liteq_messages WHERE queue_name = ?"""
 
 conn_opts = dict(isolation_level=None, check_same_thread=True)
 if sys.version_info >= (3, 12):
@@ -393,6 +400,18 @@ class LiteQueue:
         with closing(self._connect()) as conn:
             conn.execute(SQL_MESSAGES_DELETE, (msg_id,))
         logger.debug(f"Ack message {msg_id}")
+
+    def clear(self, qname: str = "default", dlq: bool = False):
+        with closing(self._connect()) as conn:
+            try:
+                conn.execute(BEGIN_WRITE_TRANSACTION)
+                conn.execute(CLEAR_QUEUE_MESSAGES, (qname,))
+                if dlq:
+                    conn.execute(DLQ_DELETE, (qname,))
+                conn.execute("COMMIT")
+            except sqlite3.Error:
+                conn.execute("ROLLBACK")
+                raise
 
     def process_failed(self, msg: Message, reason: str):
         new_retry_count = msg.retry_count + 1

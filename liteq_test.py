@@ -197,6 +197,14 @@ class TestLiteQueue(unittest.TestCase):
         # The popped message object has the retry_count as it was when fetched (0)
         self.assertEqual(msg.retry_count, 0)
 
+    def test_clear(self):
+        self.q.put(b"m1", qname="test_q")
+        self.q.put(b"m2", qname="test_q")
+        self.q.put(b"m3", qname="test_q")
+        self.assertEqual(self.q.qsize("test_q"), 3)
+        self.q.clear("test_q")
+        self.assertEqual(self.q.qsize("test_q"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
