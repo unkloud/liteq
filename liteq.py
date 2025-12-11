@@ -24,11 +24,14 @@ _last_timestamp_v7 = None
 _last_counter_v7 = 0  # 42-bit counter
 _RFC_4122_VERSION_7_FLAGS = (7 << 76) | (0x8000 << 48)
 
-assert sqlite3.sqlite_version_info > (
+if sqlite3.sqlite_version_info <= (
     3,
     37,
     0,
-), f"sqlite3 version {sqlite3.sqlite_version} is too old, please upgrade to 3.37.0 or newer"
+):
+    raise ValueError(
+        "sqlite3 version {sqlite3.sqlite_version} is too old, please upgrade to 3.37.0 or newer"
+    )
 
 
 def _uuid7_get_counter_and_tail():
@@ -138,7 +141,9 @@ UPDATE_MSG_VISIBILITY_RETRY = (
     "SET visible_after = ?, retry_count = retry_count + 1 "
     "WHERE id = ?"
 )
-UPDATE_RETRY = "UPDATE liteq_messages SET retry_count = ? WHERE id = ?"
+UPDATE_RETRY_AND_VISIBILITY = (
+    "UPDATE liteq_messages SET retry_count = ?, visible_after = ? WHERE id = ?"
+)
 QUEUE_SIZE = "SELECT COUNT(*) FROM liteq_messages WHERE queue_name = ?"
 BEGIN_WRITE_TRANSACTION = "BEGIN IMMEDIATE"
 DLQ_REDRIVE_INSERT = """INSERT INTO liteq_messages (id, queue_name, data, visible_after, retry_count, created_at)
@@ -200,9 +205,10 @@ class LiteQueue:
         )
         conn.row_factory = sqlite3.Row
         conn.execute(SQL_PRAGMA_SYNCHRONOUS)
-        conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DDL, False)
-        conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DML, False)
-        conn.setconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_FKEY, True)
+        if sys.version_info >= (3, 12):
+            conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DDL, False)
+            conn.setconfig(sqlite3.SQLITE_DBCONFIG_DQS_DML, False)
+            conn.setconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_FKEY, True)
         return conn
 
     def _init_db(self):
@@ -218,7 +224,8 @@ class LiteQueue:
         retries_on_conflict: int = 5,
         pause_on_conflict: float = 0.05,
     ):
-        assert len(messages) <= 50, f"The batch size must be <= 50, got {len(messages)}"
+        if len(messages) > 50:
+            raise ValueError("The batch size must be <= 50, got {len(messages)}")
         with closing(self._connect()) as conn:
             for retry in range(retries_on_conflict):
                 try:
@@ -466,18 +473,17 @@ class LiteQueue:
         with closing(self._connect()) as conn:
             try:
                 conn.execute(BEGIN_WRITE_TRANSACTION)
-                if new_retry_count > self.max_retries:
+                if new_retry_count >= self.max_retries:
                     # Move to DLQ
                     _move_to_dlq(conn, msg.id, msg.queue_name, msg.data, reason)
                     logger.warning(
                         f"Message {msg.id} moved to DLQ from reject: {reason}"
                     )
                 else:
-                    # Update retry_count.
-                    # Note: 'visible_after' is already set to now + timeout from pop().
+                    # Update retry_count and reset the visibility timeout
                     conn.execute(
-                        UPDATE_RETRY,
-                        (new_retry_count, msg.id),
+                        UPDATE_RETRY_AND_VISIBILITY,
+                        (new_retry_count, msg.id, int(time.time())),
                     )
                 conn.execute("COMMIT")
             except:

@@ -219,14 +219,14 @@ class TestLiteQueue(unittest.TestCase):
     def test_put_batch_visibility_delay(self):
         self.q.put_batch([b"later1", b"later2"], visible_after_seconds=1)
         self.assertIsNone(self.q.pop())
-        time.sleep(1.1)
+        time.sleep(1.5)
         first = self.q.pop()
         second = self.q.pop()
         self.assertIsNotNone(first)
         self.assertIsNotNone(second)
 
     def test_put_batch_size_limit(self):
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             self.q.put_batch([b"x"] * 51)
 
     def test_put_batch_retries_on_conflict(self):

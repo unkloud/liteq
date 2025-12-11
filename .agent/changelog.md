@@ -18,7 +18,7 @@ Filled in "What's it for" section in README.md highlighting key benefits like ze
 Refactored README.md to improve structure, add installation instructions, and list examples for better self-guidance.
 - Refined the Disclaimer section in README.md to be more professional and polite while maintaining clarity.
 
-Updated README API reference to cover new LiteQueue parameters and helper APIs, documented by AI coding agent.
+Updated README API reference to reflect new LiteQueue parameters, helper APIs, and process_failed behavior; documented by AI coding agent.
 Added put_batch retry fix and comprehensive batch insertion tests (success, visibility delay, size limit, conflict retry) — changes authored by AI coding agent.
 
 Documented put_batch API reference and usage example in README, authored by AI coding agent.

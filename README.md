@@ -187,7 +187,8 @@ Moves all DLQ messages back to the active queue.
 
 ### `process_failed(msg: Message, reason: str)`
 
-Marks a message as failed, incrementing retries or moving it to DLQ.
+Marks a message as failed. Increments `retry_count` and resets visibility to `now` so the message can be retried
+immediately; once retries reach `max_retries`, moves the message to the DLQ and records the failure reason.
 
 ### `Message`
 
