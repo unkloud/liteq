@@ -122,44 +122,65 @@ Check the `examples/` directory for more patterns:
 
 ### `LiteQueue(filename: str, max_retries: int = 5, timeout_seconds: int = 5)`
 
-Initializes the queue.
+Creates or opens the SQLite-backed queue.
 
-* `filename`: Path to SQLite DB.
-* `max_retries`: Retries before DLQ.
+* `filename`: Path to SQLite DB file.
+* `max_retries`: Number of attempts before moving a message to DLQ.
+* `timeout_seconds`: SQLite lock timeout for writes/reads.
 
-### `put(data: bytes, qname="default", visible_after_seconds=0) -> str`
+### `put(data: bytes, qname="default", visible_after_seconds=0, retries_on_conflict=5, pause_on_conflict=0.05) -> str`
 
-Enqueues data. Returns Message ID.
+Enqueues a message and returns its ID.
 
-### `consume(qname="default", invisible_on_receive=60)`
+* `visible_after_seconds`: Delay before the message becomes visible.
+* `retries_on_conflict` / `pause_on_conflict`: Retry policy for rare UUID collisions.
 
-Context manager for safe processing.
+### `consume(qname="default", invisible_on_receive=60, wait_seconds=20)`
 
-### `pop(qname="default", invisible_seconds=60, wait_seconds=0) -> Message | None`
+Context manager for safe processing; auto-ACK on success, DLQ/backoff on error.
 
-Fetches a message.
+### `pop(qname="default", invisible_seconds=60, wait_seconds=0, pause_on_empty_fetch=0.05) -> Message | None`
 
-* `wait_seconds`: If > 0, blocks/polls for this duration if empty.
+Fetches a message with manual ACK control.
+
+* `wait_seconds`: If > 0, poll until timeout when empty.
+* `pause_on_empty_fetch`: Sleep interval between polls.
 
 ### `peek(qname="default") -> Message | None`
 
-Views the next message without locking it.
+Views the next visible message without locking it.
+
+### `delete(msg_id: str)`
+
+Acks a message by ID (use after `pop`).
+
+### `clear(qname="default", dlq=False)`
+
+Deletes all messages in a queue; set `dlq=True` to also clear DLQ.
 
 ### `qsize(qname) -> int`
 
-Approximate count of messages.
+Approximate count of messages for a queue.
 
 ### `empty(qname) -> bool`
 
-True if empty.
+Returns `True` if the queue has no visible messages.
 
 ### `join(qname="default")`
 
-Blocks the calling thread until the queue is empty.
+Blocks until the queue is empty.
 
 ### `redrive(qname="default")`
 
 Moves all DLQ messages back to the active queue.
+
+### `process_failed(msg: Message, reason: str)`
+
+Marks a message as failed, incrementing retries or moving it to DLQ.
+
+### `Message`
+
+Dataclass returned by `pop`/`consume`/`peek` with fields `id`, `data`, `queue_name`, `retry_count`, `created_at`.
 
 ## Under the Hood
 

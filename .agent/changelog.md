@@ -17,3 +17,5 @@ Filled in "What's it for" section in README.md highlighting key benefits like ze
 
 Refactored README.md to improve structure, add installation instructions, and list examples for better self-guidance.
 - Refined the Disclaimer section in README.md to be more professional and polite while maintaining clarity.
+
+Updated README API reference to cover new LiteQueue parameters and helper APIs, documented by AI coding agent.
