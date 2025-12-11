@@ -19,3 +19,6 @@ Refactored README.md to improve structure, add installation instructions, and li
 - Refined the Disclaimer section in README.md to be more professional and polite while maintaining clarity.
 
 Updated README API reference to cover new LiteQueue parameters and helper APIs, documented by AI coding agent.
+Added put_batch retry fix and comprehensive batch insertion tests (success, visibility delay, size limit, conflict retry) — changes authored by AI coding agent.
+
+Documented put_batch API reference and usage example in README, authored by AI coding agent.

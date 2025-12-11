@@ -72,6 +72,9 @@ q.put(b"Task 1")
 
 # Send to a specific queue with a delay
 q.put(b"Task 2", qname="emails", visible_after_seconds=60)
+
+# Send a small batch (up to 50 messages)
+q.put_batch([b"Task 3", b"Task 4"], qname="emails")
 ```
 
 ### Consuming Messages (Best Practice)
@@ -134,6 +137,14 @@ Enqueues a message and returns its ID.
 
 * `visible_after_seconds`: Delay before the message becomes visible.
 * `retries_on_conflict` / `pause_on_conflict`: Retry policy for rare UUID collisions.
+
+### `put_batch(messages: list[bytes], qname="default", visible_after_seconds=0, retries_on_conflict=5, pause_on_conflict=0.05) -> list[str]`
+
+Enqueues up to 50 messages at once and returns their IDs in order.
+
+* `messages`: Sequence of message payloads (bytes) with length `<= 50`.
+* `visible_after_seconds`: Delay applied to all messages before they become visible.
+* `retries_on_conflict` / `pause_on_conflict`: Retry policy for rare UUID collisions affecting the batch.
 
 ### `consume(qname="default", invisible_on_receive=60, wait_seconds=20)`
 

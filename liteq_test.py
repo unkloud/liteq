@@ -1,8 +1,9 @@
-import unittest
 import os
 import time
 import sqlite3
 import threading
+import unittest
+from unittest.mock import patch
 from liteq import (
     LiteQueue,
     Message,
@@ -204,6 +205,51 @@ class TestLiteQueue(unittest.TestCase):
         self.assertEqual(self.q.qsize("test_q"), 3)
         self.q.clear("test_q")
         self.assertEqual(self.q.qsize("test_q"), 0)
+
+    def test_put_batch_inserts_all(self):
+        msgs = [b"a", b"b", b"c"]
+        msg_ids = self.q.put_batch(msgs, qname="batch")
+        self.assertEqual(len(msg_ids), len(msgs))
+
+        popped = [self.q.pop(qname="batch") for _ in range(len(msgs))]
+        self.assertTrue(all(popped))
+        self.assertEqual({m.data for m in popped}, set(msgs))
+        self.assertTrue(self.q.empty())
+
+    def test_put_batch_visibility_delay(self):
+        self.q.put_batch([b"later1", b"later2"], visible_after_seconds=1)
+        self.assertIsNone(self.q.pop())
+        time.sleep(1.1)
+        first = self.q.pop()
+        second = self.q.pop()
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+
+    def test_put_batch_size_limit(self):
+        with self.assertRaises(AssertionError):
+            self.q.put_batch([b"x"] * 51)
+
+    def test_put_batch_retries_on_conflict(self):
+        class FailingOnceConnection(sqlite3.Connection):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._failed = False
+
+            def executemany(self, sql, seq_of_parameters):
+                if not self._failed:
+                    self._failed = True
+                    raise sqlite3.IntegrityError("conflict")
+                return super().executemany(sql, seq_of_parameters)
+
+        with patch(
+            "liteq.sqlite3.connect", new=lambda *a, **k: FailingOnceConnection(*a, **k)
+        ):
+            q = LiteQueue(DB_FILE)
+            msg_ids = q.put_batch([b"r1", b"r2"], pause_on_conflict=0)
+            self.assertEqual(len(msg_ids), 2)
+            with sqlite3.connect(DB_FILE) as conn:
+                count = conn.execute(COUNT_MESSAGES).fetchone()[0]
+            self.assertEqual(count, 2)
 
 
 if __name__ == "__main__":

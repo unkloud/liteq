@@ -210,6 +210,50 @@ class LiteQueue:
             conn.execute(SQL_PRAGMA_WAL)
             conn.executescript(SQL_SCHEMA)
 
+    def put_batch(
+        self,
+        messages: list[bytes],
+        qname: str = "default",
+        visible_after_seconds: int = 0,
+        retries_on_conflict: int = 5,
+        pause_on_conflict: float = 0.05,
+    ):
+        assert len(messages) <= 50, f"The batch size must be <= 50, got {len(messages)}"
+        with closing(self._connect()) as conn:
+            for retry in range(retries_on_conflict):
+                try:
+                    now = int(time.time())
+                    visible_after = int(now + visible_after_seconds)
+                    msg_ids = []
+                    for _ in range(len(messages)):
+                        msg_id = str(uuid_v7())
+                        msg_ids.append(msg_id)
+                    sql_vals = zip(
+                        msg_ids,
+                        [qname] * len(messages),
+                        messages,
+                        [visible_after] * len(messages),
+                        [0] * len(messages),
+                        [now] * len(messages),
+                    )
+                    conn.execute(BEGIN_WRITE_TRANSACTION)
+                    conn.executemany(SQL_MESSAGES_INSERT, sql_vals)
+                    conn.execute("COMMIT")
+                    logger.debug("Put batch %s to queue %s", msg_ids, qname)
+                    return msg_ids
+                except sqlite3.IntegrityError:
+                    conn.execute("ROLLBACK")
+                    logger.warning("Put batch conflict for queue %s, retrying", qname)
+                    time.sleep(pause_on_conflict)
+                except sqlite3.Error:
+                    conn.execute("ROLLBACK")
+                    raise
+            else:
+                logger.error(f"Failed to put message {msg_ids} to queue {qname}")
+                raise sqlite3.IntegrityError(
+                    f"Failed to put message {msg_ids} to queue {qname} after {retries_on_conflict} retries"
+                )
+
     def put(
         self,
         data: bytes,
