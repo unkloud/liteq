@@ -201,5 +201,3 @@ Dataclass returned by `pop`/`consume`/`peek` with fields `id`, `data`, `queue_na
 * **UUID v7**: Messages use time-sorted UUIDs for efficient indexing and ordering.
 
 ## TODO
-
-* [] SQS style batching
