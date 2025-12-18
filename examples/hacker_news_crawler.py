@@ -182,7 +182,7 @@ def crawl_items(db_path: str, queue: LiteQueue):
                         for child_id in item.children_ids:
                             queue.put(str(child_id).encode("utf-8"))
                     logger.info(f"Successfully processed item: {item_id}")
-                    time.sleep(random.uniform(1.7, 3.1))
+                    time.sleep(random.uniform(0.5, 1.5))
                 else:
                     logger.info("Queue empty, exiting loop.")
                     break
